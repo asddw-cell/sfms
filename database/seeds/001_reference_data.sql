@@ -2,12 +2,13 @@
 -- GOLIATH SFMS — Sales Forecast Management System
 -- Seed Script: 001_reference_data.sql
 -- Description: Seeds all reference data tables with confirmed initial values
--- Version: 1.0
--- Date: 2026-03-01
+-- Version: 1.1
+-- Date: 2026-03-26
+-- Changes from v1.0:
+--   - Removed CanManageCycles from tblRole seed (column removed from schema)
 -- Run AFTER 001_initial_schema.sql
 -- =============================================================================
--- This script is safe to run multiple times — it uses MERGE statements so
--- existing rows are updated and new rows are inserted without duplicates.
+-- Safe to re-run — all inserts use MERGE (upsert) statements.
 -- =============================================================================
 
 SET NOCOUNT ON;
@@ -15,7 +16,7 @@ SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
 
-PRINT '=== SFMS Reference Data Seeding Starting ===';
+PRINT '=== SFMS Reference Data Seeding Starting (v1.1) ===';
 PRINT '';
 
 -- =============================================================================
@@ -26,22 +27,19 @@ PRINT '--- Seeding tblCurrency ---';
 
 MERGE dbo.tblCurrency AS target
 USING (VALUES
-    ('USD', 'US Dollar',          '$'),
-    ('GBP', 'Pound Sterling',     '£'),
-    ('EUR', 'Euro',               '€'),
-    ('AUD', 'Australian Dollar',  'A$')
+    ('USD', 'US Dollar',         '$' ),
+    ('GBP', 'Pound Sterling',    '£' ),
+    ('EUR', 'Euro',              '€' ),
+    ('AUD', 'Australian Dollar', 'A$')
 ) AS source (Code, Name, Symbol)
 ON target.Code = source.Code
 WHEN MATCHED THEN
-    UPDATE SET
-        Name     = source.Name,
-        Symbol   = source.Symbol,
-        IsActive = 1
+    UPDATE SET Name = source.Name, Symbol = source.Symbol, IsActive = 1
 WHEN NOT MATCHED BY TARGET THEN
     INSERT (Code, Name, Symbol, IsActive)
     VALUES (source.Code, source.Name, source.Symbol, 1);
 
-PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' currency row(s)';
+PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' row(s)';
 GO
 
 -- =============================================================================
@@ -68,7 +66,7 @@ WHEN NOT MATCHED BY TARGET THEN
     INSERT (Code, Name, CurrencyCode, IsActive, CreatedDate, ModifiedDate)
     VALUES (source.Code, source.Name, source.CurrencyCode, 1, GETUTCDATE(), GETUTCDATE());
 
-PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' business unit row(s)';
+PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' row(s)';
 GO
 
 -- =============================================================================
@@ -77,27 +75,23 @@ GO
 
 PRINT '--- Seeding tblForecastType ---';
 
--- Use SET IDENTITY_INSERT to control seed values explicitly
 SET IDENTITY_INSERT dbo.tblForecastType ON;
 
 MERGE dbo.tblForecastType AS target
 USING (VALUES
     (1, 'Sales', 'Sales forecast — used for purchasing and inventory planning'),
-    (2, 'GM',    'General Manager forecast — used for financial budgeting')
+    (2, 'GM',    'General Manager forecast — used for financial budgeting. Seeded from Sales and adjusted.')
 ) AS source (Code, Name, Description)
 ON target.Code = source.Code
 WHEN MATCHED THEN
-    UPDATE SET
-        Name        = source.Name,
-        Description = source.Description,
-        IsActive    = 1
+    UPDATE SET Name = source.Name, Description = source.Description, IsActive = 1
 WHEN NOT MATCHED BY TARGET THEN
     INSERT (Code, Name, Description, IsActive)
     VALUES (source.Code, source.Name, source.Description, 1);
 
 SET IDENTITY_INSERT dbo.tblForecastType OFF;
 
-PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' forecast type row(s)';
+PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' row(s)';
 GO
 
 -- =============================================================================
@@ -114,14 +108,12 @@ USING (VALUES
 ) AS source (Code, Name)
 ON target.Code = source.Code
 WHEN MATCHED THEN
-    UPDATE SET
-        Name     = source.Name,
-        IsActive = 1
+    UPDATE SET Name = source.Name, IsActive = 1
 WHEN NOT MATCHED BY TARGET THEN
     INSERT (Code, Name, IsActive)
     VALUES (source.Code, source.Name, 1);
 
-PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' sales channel row(s)';
+PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' row(s)';
 GO
 
 -- =============================================================================
@@ -139,20 +131,29 @@ USING (VALUES
 ) AS source (Code, Name)
 ON target.Code = source.Code
 WHEN MATCHED THEN
-    UPDATE SET
-        Name     = source.Name,
-        IsActive = 1
+    UPDATE SET Name = source.Name, IsActive = 1
 WHEN NOT MATCHED BY TARGET THEN
     INSERT (Code, Name, IsActive)
     VALUES (source.Code, source.Name, 1);
 
 SET IDENTITY_INSERT dbo.tblPriceType OFF;
 
-PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' price type row(s)';
+PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' row(s)';
 GO
 
 -- =============================================================================
 -- 6. ROLES
+-- =============================================================================
+-- Permission matrix:
+--
+--  Role        HorizonBack  ViewAllBU  ManageUsers  ManageRef  LoadActuals
+--  SalesUser       0            0           0           0           0
+--  Manager         0            0           0           0           0
+--  PowerUser       0            1           0           0           1
+--  Admin           0            1           1           1           1
+--
+-- HorizonMonthsBack = 0 for all roles initially (current month + future only).
+-- Can be increased per-role or overridden per-user in tblUserBusinessUnit.
 -- =============================================================================
 
 PRINT '--- Seeding tblRole ---';
@@ -161,41 +162,29 @@ SET IDENTITY_INSERT dbo.tblRole ON;
 
 MERGE dbo.tblRole AS target
 USING (VALUES
---  Code  Name            HorizonBack  ViewAllBU  ManageUsers  ManageRef  ManageCycles  LoadActuals
-    (1,   'SalesUser',    0,           0,         0,           0,         0,            0),
-    (2,   'Manager',      0,           0,         0,           0,         0,            0),
-    (3,   'PowerUser',    0,           1,         0,           0,         1,            1),
-    (4,   'Admin',        0,           1,         1,           1,         1,            1)
-) AS source (
-    Code, Name, HorizonMonthsBack,
-    CanViewAllBU, CanManageUsers, CanManageRefData,
-    CanManageCycles, CanLoadActuals
-)
+--  Code  Name          HorizonBack  ViewAllBU  ManageUsers  ManageRef  LoadActuals
+    (1,  'SalesUser',   0,           0,         0,           0,         0),
+    (2,  'Manager',     0,           0,         0,           0,         0),
+    (3,  'PowerUser',   0,           1,         0,           0,         1),
+    (4,  'Admin',       0,           1,         1,           1,         1)
+) AS source (Code, Name, HorizonMonthsBack, CanViewAllBU, CanManageUsers, CanManageRefData, CanLoadActuals)
 ON target.Code = source.Code
 WHEN MATCHED THEN
     UPDATE SET
-        Name                = source.Name,
-        HorizonMonthsBack   = source.HorizonMonthsBack,
-        CanViewAllBU        = source.CanViewAllBU,
-        CanManageUsers      = source.CanManageUsers,
-        CanManageRefData    = source.CanManageRefData,
-        CanManageCycles     = source.CanManageCycles,
-        CanLoadActuals      = source.CanLoadActuals
+        Name              = source.Name,
+        HorizonMonthsBack = source.HorizonMonthsBack,
+        CanViewAllBU      = source.CanViewAllBU,
+        CanManageUsers    = source.CanManageUsers,
+        CanManageRefData  = source.CanManageRefData,
+        CanLoadActuals    = source.CanLoadActuals
 WHEN NOT MATCHED BY TARGET THEN
-    INSERT (
-        Code, Name, HorizonMonthsBack,
-        CanViewAllBU, CanManageUsers, CanManageRefData,
-        CanManageCycles, CanLoadActuals
-    )
-    VALUES (
-        source.Code, source.Name, source.HorizonMonthsBack,
-        source.CanViewAllBU, source.CanManageUsers, source.CanManageRefData,
-        source.CanManageCycles, source.CanLoadActuals
-    );
+    INSERT (Code, Name, HorizonMonthsBack, CanViewAllBU, CanManageUsers, CanManageRefData, CanLoadActuals)
+    VALUES (source.Code, source.Name, source.HorizonMonthsBack, source.CanViewAllBU,
+            source.CanManageUsers, source.CanManageRefData, source.CanLoadActuals);
 
 SET IDENTITY_INSERT dbo.tblRole OFF;
 
-PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' role row(s)';
+PRINT '  Merged: ' + CAST(@@ROWCOUNT AS nvarchar) + ' row(s)';
 GO
 
 -- =============================================================================
@@ -203,18 +192,17 @@ GO
 -- =============================================================================
 
 PRINT '';
-PRINT '=== Reference Data Seeding Complete ===';
+PRINT '=== Reference Data Seeding Complete (v1.1) ===';
 PRINT '';
-PRINT 'Seeded tables:';
-PRINT '  tblCurrency       : ' + CAST((SELECT COUNT(*) FROM dbo.tblCurrency)       AS nvarchar) + ' rows';
-PRINT '  tblBusinessUnit   : ' + CAST((SELECT COUNT(*) FROM dbo.tblBusinessUnit)   AS nvarchar) + ' rows';
-PRINT '  tblForecastType   : ' + CAST((SELECT COUNT(*) FROM dbo.tblForecastType)   AS nvarchar) + ' rows';
-PRINT '  tblSalesChannel   : ' + CAST((SELECT COUNT(*) FROM dbo.tblSalesChannel)   AS nvarchar) + ' rows';
-PRINT '  tblPriceType      : ' + CAST((SELECT COUNT(*) FROM dbo.tblPriceType)      AS nvarchar) + ' rows';
-PRINT '  tblRole           : ' + CAST((SELECT COUNT(*) FROM dbo.tblRole)           AS nvarchar) + ' rows';
+PRINT 'Row counts:';
+PRINT '  tblCurrency       : ' + CAST((SELECT COUNT(*) FROM dbo.tblCurrency)     AS nvarchar) + ' rows';
+PRINT '  tblBusinessUnit   : ' + CAST((SELECT COUNT(*) FROM dbo.tblBusinessUnit) AS nvarchar) + ' rows';
+PRINT '  tblForecastType   : ' + CAST((SELECT COUNT(*) FROM dbo.tblForecastType) AS nvarchar) + ' rows';
+PRINT '  tblSalesChannel   : ' + CAST((SELECT COUNT(*) FROM dbo.tblSalesChannel) AS nvarchar) + ' rows';
+PRINT '  tblPriceType      : ' + CAST((SELECT COUNT(*) FROM dbo.tblPriceType)    AS nvarchar) + ' rows';
+PRINT '  tblRole           : ' + CAST((SELECT COUNT(*) FROM dbo.tblRole)         AS nvarchar) + ' rows';
 PRINT '';
-PRINT 'Note: tblBrand, tblCustomer, tblItem and tblUser are not seeded here.';
-PRINT 'These will be populated via:';
-PRINT '  - A separate migration script from ERP data (brands, customers, items)';
-PRINT '  - First login via Azure Entra ID (users — auto-provisioned or admin-created)';
+PRINT 'Not seeded here — populated separately:';
+PRINT '  tblBrand, tblCustomer, tblItem  — via ERP migration script';
+PRINT '  tblUser                          — via Azure Entra ID on first login';
 GO
