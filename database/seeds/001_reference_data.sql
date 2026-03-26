@@ -50,10 +50,10 @@ PRINT '--- Seeding tblBusinessUnit ---';
 
 MERGE dbo.tblBusinessUnit AS target
 USING (VALUES
-    ('Goliath_EU', 'Goliath Europe',    'EUR'),
-    ('Goliath_UK', 'Goliath UK',        'GBP'),
-    ('Goliath_US', 'Goliath US',        'USD'),
-    ('Goliath_AU', 'Goliath Australia', 'AUD')
+    ('Goliath_EU', 'Goliath BV',    'EUR'),
+    ('Goliath_UK', 'Vivid Imaginations',        'GBP'),
+    ('Goliath_US', 'Pressman Toy Corp',        'USD'),
+    ('Goliath_AU', 'Crown & Andrews', 'AUD')
 ) AS source (Code, Name, CurrencyCode)
 ON target.Code = source.Code
 WHEN MATCHED THEN
