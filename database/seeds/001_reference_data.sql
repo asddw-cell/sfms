@@ -194,13 +194,20 @@ GO
 PRINT '';
 PRINT '=== Reference Data Seeding Complete (v1.1) ===';
 PRINT '';
+DECLARE @cCurrency     int = (SELECT COUNT(*) FROM dbo.tblCurrency);
+DECLARE @cBU           int = (SELECT COUNT(*) FROM dbo.tblBusinessUnit);
+DECLARE @cForecast     int = (SELECT COUNT(*) FROM dbo.tblForecastType);
+DECLARE @cChannel      int = (SELECT COUNT(*) FROM dbo.tblSalesChannel);
+DECLARE @cPriceType    int = (SELECT COUNT(*) FROM dbo.tblPriceType);
+DECLARE @cRole         int = (SELECT COUNT(*) FROM dbo.tblRole);
+
 PRINT 'Row counts:';
-PRINT '  tblCurrency       : ' + CAST((SELECT COUNT(*) FROM dbo.tblCurrency)     AS nvarchar) + ' rows';
-PRINT '  tblBusinessUnit   : ' + CAST((SELECT COUNT(*) FROM dbo.tblBusinessUnit) AS nvarchar) + ' rows';
-PRINT '  tblForecastType   : ' + CAST((SELECT COUNT(*) FROM dbo.tblForecastType) AS nvarchar) + ' rows';
-PRINT '  tblSalesChannel   : ' + CAST((SELECT COUNT(*) FROM dbo.tblSalesChannel) AS nvarchar) + ' rows';
-PRINT '  tblPriceType      : ' + CAST((SELECT COUNT(*) FROM dbo.tblPriceType)    AS nvarchar) + ' rows';
-PRINT '  tblRole           : ' + CAST((SELECT COUNT(*) FROM dbo.tblRole)         AS nvarchar) + ' rows';
+PRINT '  tblCurrency       : ' + CAST(@cCurrency   AS nvarchar) + ' rows';
+PRINT '  tblBusinessUnit   : ' + CAST(@cBU         AS nvarchar) + ' rows';
+PRINT '  tblForecastType   : ' + CAST(@cForecast   AS nvarchar) + ' rows';
+PRINT '  tblSalesChannel   : ' + CAST(@cChannel    AS nvarchar) + ' rows';
+PRINT '  tblPriceType      : ' + CAST(@cPriceType  AS nvarchar) + ' rows';
+PRINT '  tblRole           : ' + CAST(@cRole       AS nvarchar) + ' rows';
 PRINT '';
 PRINT 'Not seeded here — populated separately:';
 PRINT '  tblBrand, tblCustomer, tblItem  — via ERP migration script';
