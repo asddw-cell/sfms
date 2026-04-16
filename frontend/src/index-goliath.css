@@ -1,0 +1,231 @@
+/* index-goliath.css — Goliath-branded theme for SFMS
+   To revert: change the import in main.jsx back to './index.css'
+   Colour rationale:
+     Primary    = Goliath red, desaturated/darkened for UI use (not full-saturation brand red)
+     Accent     = Goliath yellow, muted to avoid eye-strain on a data grid
+     Functional colours (success/danger/warn) = unchanged — serve a data meaning
+     Backgrounds = off-white warm tint, consistent with red/yellow palette
+*/
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Brand-derived UI colours — intentionally softened from full brand saturation */
+  --c-primary:   #8B1A12;   /* Deep Goliath red — nav, headers, primary buttons  */
+  --c-primary-h: #6E1410;   /* Darker on hover                                   */
+  --c-accent:    #C8960A;   /* Muted Goliath yellow — focus rings, active states  */
+  --c-success:   #1e8449;   /* Green — actuals above forecast (unchanged)         */
+  --c-danger:    #c0392b;   /* Red — below forecast / errors (unchanged)          */
+  --c-warn:      #d68910;   /* Amber — warnings (unchanged)                       */
+
+  /* Surfaces — warm off-white rather than cool grey */
+  --c-bg:        #F9F4F3;   /* Warm light background                              */
+  --c-surface:   #FFFFFF;
+  --c-border:    #DCCFCD;   /* Warm-tinted border                                 */
+  --c-text:      #1C1210;   /* Near-black with warm undertone                     */
+  --c-muted:     #7A6662;   /* Warm mid-grey for labels                           */
+  --c-locked:    #EDE8E7;   /* Locked cell background — warm light grey           */
+
+  --radius:  6px;
+  --shadow:  0 1px 4px rgba(80,20,10,.10);
+}
+
+/* ── Typography ────────────────────────────────────────────────────────────── */
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  background: var(--c-bg);
+  color: var(--c-text);
+  line-height: 1.5;
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────────── */
+.app-shell   { display: flex; flex-direction: column; min-height: 100vh; }
+.app-content { flex: 1; padding: 24px; max-width: 1600px; margin: 0 auto; width: 100%; }
+
+/* ── Nav bar ─────────────────────────────────────────────────────────────────
+   Deep red background with yellow active underline — brand feel without
+   the full-saturation red that would be too heavy at top of every screen.
+*/
+.nav {
+  background: var(--c-primary);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  height: 52px;
+  gap: 24px;
+  box-shadow: 0 2px 6px rgba(80,20,10,.20);
+  border-bottom: 3px solid #C8960A;  /* Yellow accent bottom border */
+}
+.nav-logo {
+  height: 38px;
+  width: auto;
+  display: block;
+  mix-blend-mode: screen;   /* blacks become transparent on the red nav */
+}
+
+.nav-brand {
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: .5px;
+  color: #fff;
+}
+.nav a {
+  color: rgba(255,255,255,.80);
+  text-decoration: none;
+  font-size: 13px;
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
+  transition: color .15s, border-color .15s;
+}
+.nav a:hover { color: #fff; border-bottom-color: rgba(200,150,10,.6); }
+.nav a.active { color: #fff; border-bottom-color: #C8960A; }
+.nav-spacer { flex: 1; }
+.nav-user { font-size: 12px; opacity: .70; }
+
+/* ── Cards ──────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px;
+  margin-bottom: 20px;
+  border-top: 3px solid var(--c-primary);  /* Subtle red top accent */
+}
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  color: var(--c-primary);
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 16px;
+}
+.field-group { display: flex; flex-direction: column; gap: 4px; }
+.field-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+
+/* ── Form controls ───────────────────────────────────────────────────────────── */
+select, input[type="date"], input[type="month"], input[type="text"], input[type="number"] {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  background: var(--c-surface);
+  color: var(--c-text);
+  min-width: 160px;
+}
+select:focus, input:focus {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -1px;
+}
+select:disabled, input:disabled {
+  background: var(--c-locked);
+  color: var(--c-muted);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────────── */
+.btn {
+  height: 34px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s;
+  white-space: nowrap;
+}
+.btn-primary        { background: var(--c-primary); color: #fff; }
+.btn-primary:hover  { background: var(--c-primary-h); }
+.btn-danger         { background: var(--c-danger); color: #fff; }
+.btn-danger:hover   { opacity: .88; }
+.btn-ghost          { background: transparent; color: var(--c-primary); border: 1px solid var(--c-border); }
+.btn-ghost:hover    { background: #F5EDEC; }
+.btn:disabled       { opacity: .45; cursor: not-allowed; }
+
+/* ── Badges ──────────────────────────────────────────────────────────────────── */
+.badge         { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+.badge-success { background: #d5f5e3; color: var(--c-success); }
+.badge-danger  { background: #fadbd8; color: var(--c-danger); }
+.badge-warn    { background: #fef9e7; color: var(--c-warn); }
+.badge-muted   { background: var(--c-locked); color: var(--c-muted); }
+
+/* ── Tables ──────────────────────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+  background: var(--c-primary);
+  color: #fff;
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+}
+td { padding: 7px 12px; border-bottom: 1px solid var(--c-border); }
+tr:hover td { background: #F5EDEC; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.pos { color: var(--c-success); }
+.neg { color: var(--c-danger); }
+
+/* ── Modals ──────────────────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(30,10,5,.50);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.modal {
+  background: var(--c-surface);
+  border-radius: var(--radius);
+  padding: 28px;
+  width: 420px;
+  max-width: 95vw;
+  box-shadow: 0 8px 32px rgba(80,20,10,.20);
+  border-top: 4px solid var(--c-primary);
+}
+.modal h3       { margin-bottom: 18px; font-size: 16px; color: var(--c-primary); }
+.modal-row      { margin-bottom: 14px; }
+.modal-row label {
+  display: block; font-size: 11px; font-weight: 600;
+  color: var(--c-muted); text-transform: uppercase; margin-bottom: 4px;
+}
+.modal-row input, .modal-row textarea {
+  width: 100%; height: 34px; padding: 0 10px;
+  border: 1px solid var(--c-border); border-radius: var(--radius); font-size: 13px;
+}
+.modal-row textarea { height: 72px; padding: 8px 10px; resize: vertical; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+/* ── Utility ─────────────────────────────────────────────────────────────────── */
+.text-muted  { color: var(--c-muted); }
+.text-center { text-align: center; }
+.mt-8  { margin-top:  8px; }
+.mt-16 { margin-top: 16px; }
+.error-banner {
+  background: #fadbd8; color: var(--c-danger);
+  border: 1px solid #f1948a;
+  border-radius: var(--radius); padding: 10px 14px;
+  margin-bottom: 16px; font-size: 13px;
+}
+.loading { padding: 40px; text-align: center; color: var(--c-muted); }
+
+/* ── AG Grid locked cell ─────────────────────────────────────────────────────── */
+.ag-cell-locked {
+  background: var(--c-locked) !important;
+  color: var(--c-muted) !important;
+  cursor: default !important;
+}

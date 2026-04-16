@@ -1,0 +1,24 @@
+"""
+config.py - Application settings loaded from .env file
+"""
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    db_server: str = "NLREPORTING-DTA"
+    db_name: str = "SalesForecast"
+    db_driver: str = "ODBC Driver 17 for SQL Server"
+    environment: str = "dev"
+    allowed_origins: str = "http://localhost:3000"
+    dev_user: str = "admin"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins.split(",")]
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+
+settings = Settings()
