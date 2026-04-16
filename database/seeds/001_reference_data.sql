@@ -50,10 +50,22 @@ PRINT '--- Seeding tblBusinessUnit ---';
 
 MERGE dbo.tblBusinessUnit AS target
 USING (VALUES
-    ('Goliath_EU', 'Goliath BV',    'EUR'),
-    ('Goliath_UK', 'Vivid Imaginations',        'GBP'),
-    ('Goliath_US', 'Pressman Toy Corp',        'USD'),
-    ('Goliath_AU', 'Crown & Andrews', 'AUD')
+    ('EU_BEN', 'Benelux',    'EUR'),
+    ('EU_DE', 'Germany',    'EUR'),
+    ('EU_EU', 'Europe',    'EUR'),
+    ('EU_EX', 'Export',    'EUR'),
+    ('EU_FR', 'France',    'EUR'),
+    ('EU_IB', 'Iberia',    'EUR'),
+    ('EU_IT', 'Italy',    'EUR'),
+    ('EU_NO', 'Nordics',    'EUR'),
+    ('EU_FR', 'France',    'EUR'),
+    ('EU_IB', 'Iberia',    'EUR'),
+    ('EU_IT', 'Italy',    'EUR'),
+    ('MX_MX', 'Mexico',    'USD'),
+    ('UK_UK', 'UK',        'GBP'),
+    ('US_CA', 'Canada',        'USD'),
+    ('US_US', 'US',        'USD'),
+    ('AU_AU', 'Australia', 'AUD')
 ) AS source (Code, Name, CurrencyCode)
 ON target.Code = source.Code
 WHEN MATCHED THEN
@@ -103,8 +115,8 @@ PRINT '--- Seeding tblSalesChannel ---';
 MERGE dbo.tblSalesChannel AS target
 USING (VALUES
     ('Domestic', 'Domestic'),
-    ('FOB',      'Free On Board (FOB)'),
-    ('DDP',      'Delivered Duty Paid (DDP)')
+    ('FOB',      'FOB'),
+    ('DDP',      'DDP')
 ) AS source (Code, Name)
 ON target.Code = source.Code
 WHEN MATCHED THEN
