@@ -126,9 +126,30 @@ class UserBusinessUnit(Base):
     HorizonOverrideMonthsBack = Column(Integer,    nullable=True)
     AssignedDate              = Column(DateTime,   nullable=False)
     AssignedBy                = Column(Integer,    ForeignKey("tblUser.UserID"), nullable=False)
+    ModifiedDate              = Column(DateTime,   nullable=True)
+    ModifiedBy                = Column(Integer,    ForeignKey("tblUser.UserID"), nullable=True)
 
     user          = relationship("User",         back_populates="bu_assignments", foreign_keys=[UserID])
     business_unit = relationship("BusinessUnit")
+
+
+
+class UserCustomer(Base):
+    __tablename__ = "tblUserCustomer"
+    UserID           = Column(Integer,    ForeignKey("tblUser.UserID"),           primary_key=True, nullable=False)
+    BusinessUnitCode = Column(String(10), ForeignKey("tblBusinessUnit.Code"),     primary_key=True, nullable=False)
+    CustomerCode     = Column(String(20),                                         primary_key=True, nullable=False)
+    AssignedDate     = Column(DateTime,   nullable=False)
+    AssignedBy       = Column(Integer,    ForeignKey("tblUser.UserID"),           nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["CustomerCode", "BusinessUnitCode"],
+            ["tblCustomer.Code", "tblCustomer.BusinessUnitCode"],
+        ),
+    )
+
+    customer = relationship("Customer", foreign_keys=[CustomerCode, BusinessUnitCode])
 
 
 class ForecastData(Base):
