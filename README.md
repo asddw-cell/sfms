@@ -56,6 +56,8 @@ sfms/
 │   │   │   ├── MonthPicker.jsx
 │   │   │   └── MultiSelect.jsx
 │   │   ├── pages/
+│   │   │   ├── Admin/
+│   │   │   │   └── UserAdmin.jsx  # User management (Admin only)
 │   │   │   ├── ForecastGrid/      # Main forecast entry screen
 │   │   │   └── Changes/           # Audit trail screen
 │   │   └── App.jsx
@@ -65,6 +67,7 @@ sfms/
 │   ├── ddl/                       # Schema creation scripts
 │   ├── seeds/                     # Reference data seed scripts
 │   └── migrations/                # Numbered schema change scripts
+│       └── 05_user_customer_assignments.sql
 └── etl/                           # SQL Agent actuals load scripts
 ```
 
@@ -186,6 +189,10 @@ During development, authentication is handled by a stub that reads the `X-Dev-Us
 - **Change History** — full audit trail of all edits with before/after values
 - **Multi-Responsibility** — data scoped by business unit with per-user BU assignments
 - **Multi-Currency** — prices stored in each BU's home currency
+- **User Management** — Admin UI for creating users, assigning responsibilities, 
+  setting edit horizon, and restricting access to specific customers per responsibility
+- **Customer Permissions** — Users default to seeing all customers in an assigned 
+  responsibility; optionally restrict to specific customers per responsibility
 
 ---
 
