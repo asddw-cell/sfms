@@ -192,7 +192,6 @@ export default function ForecastGrid() {
   const [showGmCopy,   setShowGmCopy]   = useState(false)
   const [showActuals,  setShowActuals]  = useState(false)
   const [showLE,       setShowLE]       = useState(false)
-  const [showEmpty,    setShowEmpty]    = useState(false)
   const [importing,    setImporting]    = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importProgress, setImportProgress] = useState(null)
@@ -381,11 +380,9 @@ map.get(itemNo).months[mk] = {
         || catalogue?.Description
         || itemNo
 
-      // Skip items where the F row has no entries in the visible range
-      // (unless showEmpty is true or the item has actuals)
       const fRowHasData = fRow && Object.values(fRow.months || {}).some(c => c?.entryNo)
       const aRowHasData = !!aRow
-      if (!showEmpty && !fRowHasData && !aRowHasData) continue
+      if (!fRowHasData && !aRowHasData) continue
 
       pairs.push({ itemNo, brandName, description, fRow, aRow })
     }
@@ -466,7 +463,7 @@ map.get(itemNo).months[mk] = {
       })
     }
     return rows
-  }, [forecastItemMap, actualsItemMap, months, selectedBrands, showEmpty])
+  }, [forecastItemMap, actualsItemMap, months, selectedBrands])
 
   // ── Row totals ─────────────────────────────────────────────────────────────
   const rowDataWithTotals = useMemo(() => {
@@ -1160,20 +1157,6 @@ map.get(itemNo).months[mk] = {
               }}
             >
               {showLE ? '✓ LE' : 'LE'}
-            </button>
-
-            <button
-              className="btn btn-ghost"
-              onClick={() => setShowEmpty(v => !v)}
-              style={{
-                borderColor: showEmpty ? 'var(--c-accent)' : 'var(--c-border)',
-                color:       showEmpty ? 'var(--c-accent)' : 'var(--c-muted)',
-                fontWeight:  showEmpty ? 700 : 400,
-                fontSize:    12,
-              }}
-              title="Show items with no forecast data in the visible range"
-            >
-              {showEmpty ? '✓ Show empty' : 'Show empty'}
             </button>
 
             {(me?.role?.CanManageRefData || me?.role?.CanManageUsers) &&
