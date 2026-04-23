@@ -195,6 +195,7 @@ function UserDetailPanel({ user, roles, allBUs, onClose, onSaved }) {
       }
       qc.invalidateQueries(['all-users'])
       onSaved()
+      if (isNew) onClose()
     } catch (e) {
       setError(e.message)
     } finally {
@@ -377,10 +378,14 @@ export default function UserAdmin() {
       )
     : users
 
+  useEffect(() => {
+    if (selected) {
+      const updated = users.find(u => u.UserID === selected.UserID)
+      if (updated) setSelected(updated)
+    }
+  }, [users])
+
   function handleSaved() {
-    // Invalidate the list so it refreshes in the background.
-    // Do NOT update selected here — doing so after the user clicks X
-    // would reopen the panel if the promise resolves after close.
     qc.invalidateQueries(['all-users'])
   }
 
