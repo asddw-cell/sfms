@@ -2,6 +2,7 @@
 schemas.py - Pydantic v2 request and response schemas.
 """
 from pydantic import BaseModel, ConfigDict
+from datetime import datetime
 from typing import Optional
 from datetime import date, datetime
 from decimal import Decimal
@@ -75,9 +76,14 @@ class RoleOut(ORMBase):
     CanManageRefData: bool
     CanLoadActuals: bool
 
+class CustomerAssignmentOut(ORMBase):
+    CustomerCode: str
+    BusinessUnitCode: str
+
 class BUAssignmentOut(ORMBase):
     BusinessUnitCode: str
-    HorizonOverrideMonthsBack: Optional[int]
+    HorizonOverrideMonthsBack: Optional[int] = None
+    customer_assignments: list[CustomerAssignmentOut] = []
 
 class UserOut(ORMBase):
     UserID: int
@@ -96,6 +102,41 @@ class MeOut(ORMBase):
     IsActive: bool
     role: RoleOut
     bu_assignments: list[BUAssignmentOut]
+
+# ── Admin / User Management ────────────────────────────────────────────────────
+
+class UserCreateRequest(BaseModel):
+    Username: str
+    DisplayName: str
+    Email: str
+    ExternalIdentityID: str = ""
+    RoleCode: int
+    IsActive: bool = True
+
+class UserUpdateRequest(BaseModel):
+    DisplayName: Optional[str] = None
+    Email: Optional[str] = None
+    RoleCode: Optional[int] = None
+    IsActive: Optional[bool] = None
+
+class BUAssignRequest(BaseModel):
+    BusinessUnitCode: str
+    HorizonOverrideMonthsBack: Optional[int] = None
+
+class CustomerAssignRequest(BaseModel):
+    CustomerCodes: list[str]  # full replacement — empty list = unrestricted (see all)
+
+class UserAdminOut(ORMBase):
+    UserID: int
+    Username: str
+    DisplayName: str
+    Email: str
+    RoleCode: int
+    RoleName: Optional[str] = None
+    IsActive: bool
+    CreatedDate: datetime
+    ModifiedDate: datetime
+    bu_assignments: list[BUAssignmentOut] = []
 
 
 # ── Forecast Data ──────────────────────────────────────────────────────────────

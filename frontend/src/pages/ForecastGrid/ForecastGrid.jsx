@@ -206,6 +206,11 @@ export default function ForecastGrid() {
   // ── Reference data ─────────────────────────────────────────────────────────
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: fetchMe })
   const { data: bus  = [] } = useQuery({ queryKey: ['bus'],  queryFn: fetchBusinessUnits })
+
+  // Only show BUs the current user is assigned to, unless they can view all
+  const permittedBUs = me?.role?.CanViewAllBU
+    ? bus
+    : bus.filter(bu => me?.bu_assignments?.some(a => a.BusinessUnitCode === bu.Code))
   const { data: fts  = [] } = useQuery({ queryKey: ['fts'],  queryFn: fetchForecastTypes })
   const { data: chns = [] } = useQuery({ queryKey: ['chns'], queryFn: fetchSalesChannels })
 
@@ -1088,7 +1093,7 @@ map.get(itemNo).months[mk] = {
             <label>Responsibility *</label>
             <select value={buCode} onChange={e => { updateBuCode(e.target.value); setCustomerCode('') }}>
               <option value="">— Select —</option>
-              {bus.map(b => <option key={b.Code} value={b.Code}>{b.Name}</option>)}
+              {permittedBUs.map(b => <option key={b.Code} value={b.Code}>{b.Name}</option>)}
             </select>
           </div>
 

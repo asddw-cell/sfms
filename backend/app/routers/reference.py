@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import (
     BusinessUnit, ForecastType, SalesChannel, Customer,
-    Brand, Item, PriceType, Currency
+    Brand, Item, PriceType, Currency, UserCustomer, UserBusinessUnit, Role
 )
 from app.schemas import (
     BusinessUnitOut, ForecastTypeOut, SalesChannelOut, CustomerOut,
-    BrandOut, ItemOut, PriceTypeOut, CurrencyOut
+    BrandOut, ItemOut, PriceTypeOut, CurrencyOut, RoleOut
 )
 from app.auth.dev_auth import get_current_user
 from app.models import User
@@ -58,10 +58,23 @@ def list_customers(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return db.query(Customer).filter(
+    # Check if this user has specific customer restrictions for this BU
+    restrictions = db.query(UserCustomer).filter(
+        UserCustomer.UserID == current_user.UserID,
+        UserCustomer.BusinessUnitCode == bu_code,
+    ).all()
+
+    q = db.query(Customer).filter(
         Customer.BusinessUnitCode == bu_code,
         Customer.IsActive == True,
-    ).order_by(Customer.Name).all()
+    )
+
+    if restrictions:
+        # User has restrictions — only return assigned customers
+        allowed_codes = [r.CustomerCode for r in restrictions]
+        q = q.filter(Customer.Code.in_(allowed_codes))
+
+    return q.order_by(Customer.Name).all()
 
 
 @router.get("/brands", response_model=list[BrandOut])
@@ -113,3 +126,10 @@ def list_price_types(
     current_user: User = Depends(get_current_user),
 ):
     return db.query(PriceType).filter(PriceType.IsActive == True).all()
+
+@router.get("/roles", response_model=list[RoleOut])
+def list_roles(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return db.query(Role).order_by(Role.Name).all()
