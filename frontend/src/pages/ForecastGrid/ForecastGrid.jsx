@@ -699,7 +699,7 @@ map.get(itemNo).months[mk] = {
       setGridError(e.message)
       qc.invalidateQueries({ queryKey: ['forecast'] }) // revert optimistic display
     }
-  }, [buCode, ftCode, channelCode, customerCode, qc])
+  }, [buCode, ftCode, channelCode, customerCode, pts, qc])
 
   // ── Double click → open modal for price / notes ───────────────────────────
   const onCellDoubleClicked = useCallback((params) => {
