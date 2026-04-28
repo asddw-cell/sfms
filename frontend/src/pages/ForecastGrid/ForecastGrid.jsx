@@ -688,7 +688,7 @@ map.get(itemNo).months[mk] = {
           CustomerCode:     customerCode,
           ItemNo:           itemNo,
           ForecastDate:     firstOfMonth(ym),
-          PriceTypeCode:    null,  // user sets price type via double-click modal
+          PriceTypeCode:    pts[0]?.Code ?? null,
           Price:            0,
           Quantity:         quantity,
           Notes:            null,
@@ -1049,7 +1049,7 @@ map.get(itemNo).months[mk] = {
           CustomerCode:     customerCode,
           ItemNo:           modalCell.itemNo,
           ForecastDate:     firstOfMonth(modalCell.ym),
-          PriceTypeCode:    modalPriceType ? Number(modalPriceType) : null,
+          PriceTypeCode:    modalPriceType ? Number(modalPriceType) : (pts[0]?.Code ?? null),
           Price:            price ?? 0,
           Quantity:         quantity,
           Notes:            notes || null,
