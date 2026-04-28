@@ -670,19 +670,23 @@ map.get(itemNo).months[mk] = {
 
     setGridError('')
 
+    const forecastQKey = ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+
     try {
       if (cell?.entryNo) {
         // Existing row — update quantity
         if (quantity === null) {
           // Cleared → delete the row
           await deleteForecastRow(buCode, cell.entryNo)
+          qc.setQueryData(forecastQKey, old => (old ?? []).filter(r => r.EntryNo !== cell.entryNo))
         } else {
-          await updateForecastRow(buCode, cell.entryNo, { Quantity: quantity, Notes: cell.notes })
+          const updated = await updateForecastRow(buCode, cell.entryNo, { Quantity: quantity, Notes: cell.notes })
+          qc.setQueryData(forecastQKey, old => (old ?? []).map(r => r.EntryNo === cell.entryNo ? updated : r))
         }
       } else {
         // New row — create with quantity only (price/price type optional)
         if (quantity === null || isNaN(quantity)) return
-        await createForecastRow(buCode, {
+        const created = await createForecastRow(buCode, {
           ForecastTypeCode: Number(ftCode),
           SalesChannelCode: channelCode,
           CustomerCode:     customerCode,
@@ -693,13 +697,13 @@ map.get(itemNo).months[mk] = {
           Quantity:         quantity,
           Notes:            null,
         })
+        qc.setQueryData(forecastQKey, old => [...(old ?? []), created])
       }
-      qc.invalidateQueries({ queryKey: ['forecast'] })
     } catch (e) {
       setGridError(e.message)
-      qc.invalidateQueries({ queryKey: ['forecast'] }) // revert optimistic display
+      qc.invalidateQueries({ queryKey: ['forecast'] }) // revert to server state on error
     }
-  }, [buCode, ftCode, channelCode, customerCode, pts, qc])
+  }, [buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands, pts, qc])
 
   // ── Double click → open modal for price / notes ───────────────────────────
   const onCellDoubleClicked = useCallback((params) => {
@@ -1033,17 +1037,19 @@ map.get(itemNo).months[mk] = {
   async function handleModalSave({ quantity, price, notes, priceTypeCode: modalPriceType }) {
     setSaving(true)
     setGridError('')
+    const forecastQKey = ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
     try {
       if (modalCell.entryNo) {
         // Simple update — price and price type are no longer part of the unique key
-        await updateForecastRow(buCode, modalCell.entryNo, {
+        const updated = await updateForecastRow(buCode, modalCell.entryNo, {
           Quantity:      quantity,
           Price:         price ?? 0,
           PriceTypeCode: modalPriceType ? Number(modalPriceType) : null,
           Notes:         notes || null,
         })
+        qc.setQueryData(forecastQKey, old => (old ?? []).map(r => r.EntryNo === modalCell.entryNo ? updated : r))
       } else {
-        await createForecastRow(buCode, {
+        const created = await createForecastRow(buCode, {
           ForecastTypeCode: Number(ftCode),
           SalesChannelCode: channelCode,
           CustomerCode:     customerCode,
@@ -1054,8 +1060,8 @@ map.get(itemNo).months[mk] = {
           Quantity:         quantity,
           Notes:            notes || null,
         })
+        qc.setQueryData(forecastQKey, old => [...(old ?? []), created])
       }
-      qc.invalidateQueries({ queryKey: ['forecast'] })
       setModalCell(null)
     } catch (e) {
       setGridError(e.message)
@@ -1069,9 +1075,10 @@ map.get(itemNo).months[mk] = {
     if (!window.confirm('Delete this forecast row?')) return
     setSaving(true)
     setGridError('')
+    const forecastQKey = ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
     try {
       await deleteForecastRow(buCode, entryNo)
-      qc.invalidateQueries({ queryKey: ['forecast'] })
+      qc.setQueryData(forecastQKey, old => (old ?? []).filter(r => r.EntryNo !== entryNo))
       setModalCell(null)
     } catch (e) {
       setGridError(e.message)
