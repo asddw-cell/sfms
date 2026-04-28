@@ -1268,6 +1268,7 @@ map.get(itemNo).months[mk] = {
               <AgGridReact
                 ref={gridRef}
                 rowData={rowDataWithTotals}
+                getRowId={params => `${params.data.itemNo}-${params.data.rowType}`}
                 context={{ rowData: rowDataWithTotals }}
                 columnDefs={colDefs}
                 pinnedTopRowData={pinnedBottomRow}
