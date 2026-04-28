@@ -570,6 +570,16 @@ map.get(itemNo).months[mk] = {
       type: 'numericColumn',
       // Only F rows in unlocked months are editable
       editable: params => params.data?.rowType === 'F' && !isLockedMonth(ym, horizonMonthsBack),
+      valueParser: params => {
+        if (params.newValue === '' || params.newValue == null) return null
+        const n = Number(params.newValue)
+        return isNaN(n) ? null : n
+      },
+      valueSetter: params => {
+        if (!params.data.months[ym]) params.data.months[ym] = {}
+        params.data.months[ym].quantity = params.newValue
+        return true
+      },
       cellStyle: params => {
         if (params.data?.rowType === 'A') return { background: '#f9fdfb', padding: 0 }
         if (isLockedMonth(ym, horizonMonthsBack)) return { background: 'var(--c-locked)', padding: 0 }
