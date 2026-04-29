@@ -871,6 +871,11 @@ map.get(itemNo).months[mk] = {
 
           try {
             if (existingCell?.entryNo) {
+              const existingQty = existingCell.quantity != null ? parseFloat(existingCell.quantity) : null
+              if (existingQty !== null && Math.abs(existingQty - qty) < 0.0001) {
+                skipped++
+                continue
+              }
               await updateForecastRow(buCode, existingCell.entryNo, { Quantity: qty, Notes: null })
               updated++
             } else {
