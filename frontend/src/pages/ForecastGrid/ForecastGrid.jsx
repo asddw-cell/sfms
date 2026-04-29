@@ -502,23 +502,39 @@ map.get(itemNo).months[mk] = {
     [rowData]
   )
 
-  // ── Pinned top totals row — forecast totals only ───────────────────────────
+  // ── Pinned top totals row — recalculated from post-filter visible rows ───────
+  // filteredTotals is populated by recalcTotals() which reads forEachNodeAfterFilter
+  // so it always reflects what AG Grid is actually displaying, including item filter.
+  const [filteredTotals, setFilteredTotals] = useState({ qty: {}, val: {} })
+
+  function recalcTotals() {
+    if (!gridRef.current?.api) return
+    const qty = {}
+    const val = {}
+    gridRef.current.api.forEachNodeAfterFilter(node => {
+      if (!node.data || node.data.rowType !== 'F') return
+      for (const ym of months) {
+        const cell = node.data.months?.[ym]
+        if (cell?.quantity != null) {
+          qty[ym] = (qty[ym] ?? 0) + Number(cell.quantity)
+          val[ym] = (val[ym] ?? 0) + Number(cell.quantity) * Number(cell.price ?? 0)
+        }
+      }
+    })
+    setFilteredTotals({ qty, val })
+  }
+
   const pinnedBottomRow = useMemo(() => {
     if (!rowData.length) return []
-    const fRows = rowData.filter(r => r.rowType === 'F')  // totals always from F rows only
     const totals = { brandName: '', itemNo: '', description: 'Total', rowType: '', months: {}, rowTotal: 0, rowValue: 0 }
     for (const ym of months) {
-      const colSum = fRows.reduce((sum, row) => sum + (row.months?.[ym]?.quantity ?? 0), 0)
-      const valSum = fRows.reduce((sum, row) => {
-        const cell = row.months?.[ym]
-        return sum + ((cell?.quantity ?? 0) * (cell?.price ?? 0))
-      }, 0)
-      totals.months[ym] = { quantity: colSum }
-      totals.rowTotal += colSum
-      totals.rowValue += valSum
+      const colQty = filteredTotals.qty[ym] ?? 0
+      totals.months[ym] = { quantity: colQty }
+      totals.rowTotal += colQty
+      totals.rowValue += filteredTotals.val[ym] ?? 0
     }
     return [totals]
-  }, [rowData, months])
+  }, [filteredTotals, months, rowData.length])
 
   // ── Column definitions ─────────────────────────────────────────────────────
   const colDefs = useMemo(() => {
@@ -1279,6 +1295,9 @@ map.get(itemNo).months[mk] = {
                 columnDefs={colDefs}
                 pinnedTopRowData={pinnedBottomRow}
                 suppressRowClickSelection
+                onGridReady={recalcTotals}
+                onRowDataUpdated={recalcTotals}
+                onFilterChanged={recalcTotals}
                 onCellValueChanged={onCellValueChanged}
                 onCellDoubleClicked={onCellDoubleClicked}
                 preventDefaultOnContextMenu={true}
