@@ -84,6 +84,10 @@ def copy_sales_to_gm(
     ).all()
 
     # Step 3 — Insert copies as target forecast type
+    # Attribute to system user so these rows are hidden in Change History by default
+    system_user = db.query(User).filter(User.Username == 'system').first()
+    author_id = system_user.UserID if system_user else current_user.UserID
+
     now = datetime.datetime.utcnow()
     inserted = 0
     for src in source_rows:
@@ -98,10 +102,10 @@ def copy_sales_to_gm(
             Price            = src.Price,
             Quantity         = src.Quantity,
             Notes            = src.Notes,
-            CreatedBy        = current_user.UserID,
+            CreatedBy        = author_id,
             CreatedDate      = now,
-            ModifiedBy       = None,
-            ModifiedDate     = None,
+            ModifiedBy       = author_id,
+            ModifiedDate     = now,
         )
         db.add(new_row)
         inserted += 1

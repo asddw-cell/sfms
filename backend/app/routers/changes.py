@@ -48,11 +48,13 @@ class ChangeRow(BaseModel):
 
 @router.get("/{bu_code}", response_model=list[ChangeRow])
 def get_changes(
-    bu_code:       str,
-    date_from:     Optional[date] = Query(default=None),
-    date_to:       Optional[date] = Query(default=None),
-    customer_code: Optional[str]  = Query(default=None),
-    item_no:       Optional[str]  = Query(default=None),
+    bu_code:            str,
+    date_from:          Optional[date] = Query(default=None),
+    date_to:            Optional[date] = Query(default=None),
+    customer_code:      Optional[str]  = Query(default=None),
+    item_no:            Optional[str]  = Query(default=None),
+    forecast_type_code: Optional[int]  = Query(default=None),
+    hide_system:        bool           = Query(default=True),
     limit: int = Query(default=200, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -86,6 +88,18 @@ def get_changes(
         where_clauses.append("f.ItemNo LIKE :item_no")
         where_clauses_hist.append("h.ItemNo LIKE :item_no")
         params["item_no"] = f"%{item_no}%"
+
+    if forecast_type_code is not None:
+        where_clauses.append("f.ForecastTypeCode = :forecast_type_code")
+        where_clauses_hist.append("h.ForecastTypeCode = :forecast_type_code")
+        params["forecast_type_code"] = forecast_type_code
+
+    if hide_system:
+        system_user = db.query(User).filter(User.Username == 'system').first()
+        if system_user:
+            where_clauses.append("f.ModifiedBy != :system_user_id")
+            where_clauses_hist.append("h.ModifiedBy != :system_user_id")
+            params["system_user_id"] = system_user.UserID
 
     where_sql      = " AND ".join(where_clauses)
     where_sql_hist = " AND ".join(where_clauses_hist)

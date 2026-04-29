@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import {
-  fetchBusinessUnits, fetchCustomers, fetchChanges, fetchMe,
+  fetchBusinessUnits, fetchCustomers, fetchChanges, fetchForecastTypes, fetchMe,
 } from '../../api/sfms'
 import MonthPicker from '../../components/MonthPicker'
 
@@ -49,12 +49,15 @@ function sixMonthsBackYM() {
 export default function Changes() {
   const [buCode,       setBuCode]       = useState('')
   const [customerCode, setCustomerCode] = useState('')
+  const [ftCode,       setFtCode]       = useState('')
   const [itemNo,       setItemNo]       = useState('')
   const [dateFrom,     setDateFrom]     = useState(sixMonthsBackYM())
   const [dateTo,       setDateTo]       = useState(todayYM())
+  const [showSystem,   setShowSystem]   = useState(false)
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: fetchMe })
   const { data: allBUs    = [] } = useQuery({ queryKey: ['bus'],  queryFn: fetchBusinessUnits })
+  const { data: fts       = [] } = useQuery({ queryKey: ['fts'],  queryFn: fetchForecastTypes })
   const bus = me?.role?.CanViewAllBU
     ? allBUs
     : allBUs.filter(bu => me?.bu_assignments?.some(a => a.BusinessUnitCode === bu.Code))
@@ -67,12 +70,14 @@ export default function Changes() {
   const canLoad = !!buCode
 
   const { data: changes = [], isLoading, error } = useQuery({
-    queryKey: ['changes', buCode, customerCode, itemNo, dateFrom, dateTo],
+    queryKey: ['changes', buCode, customerCode, ftCode, itemNo, dateFrom, dateTo, showSystem],
     queryFn: () => fetchChanges(buCode, {
-      date_from:     dateFrom ? dateFrom + '-01' : undefined,
-      date_to:       dateTo   ? dateTo   + '-01' : undefined,
-      customer_code: customerCode || undefined,
-      item_no:       itemNo       || undefined,
+      date_from:          dateFrom ? dateFrom + '-01' : undefined,
+      date_to:            dateTo   ? dateTo   + '-01' : undefined,
+      customer_code:      customerCode        || undefined,
+      item_no:            itemNo              || undefined,
+      forecast_type_code: ftCode              || undefined,
+      hide_system:        !showSystem,
     }),
     enabled: canLoad,
   })
@@ -138,6 +143,14 @@ export default function Changes() {
           </div>
 
           <div className="field-group">
+            <label>Forecast Type</label>
+            <select value={ftCode} onChange={e => setFtCode(e.target.value)}>
+              <option value="">All types</option>
+              {fts.map(f => <option key={f.Code} value={f.Code}>{f.Name}</option>)}
+            </select>
+          </div>
+
+          <div className="field-group">
             <label>Item No</label>
             <input
               type="text"
@@ -156,6 +169,17 @@ export default function Changes() {
           <div className="field-group">
             <label>Forecast period to</label>
             <MonthPicker value={dateTo} onChange={setDateTo} />
+          </div>
+
+          <div className="field-group" style={{ justifyContent: 'flex-end' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={showSystem}
+                onChange={e => setShowSystem(e.target.checked)}
+              />
+              Show system changes
+            </label>
           </div>
         </div>
 
@@ -235,7 +259,7 @@ export default function Changes() {
                         <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
                           {fmtDateTime(r.ChangedAt)}
                         </td>
-                        <td style={{ fontWeight: 500 }}>{r.ChangedBy}</td>
+                        <td style={{ fontWeight: 500, color: r.ChangedBy === 'System' ? 'var(--c-muted)' : undefined, fontStyle: r.ChangedBy === 'System' ? 'italic' : undefined }}>{r.ChangedBy}</td>
                         <td>
                           <span className={`badge ${
                             r.ChangeType === 'Price' || r.ChangeType === 'PriceType'
