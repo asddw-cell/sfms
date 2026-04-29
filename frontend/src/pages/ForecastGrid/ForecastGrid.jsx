@@ -863,6 +863,7 @@ map.get(itemNo).months[mk] = {
           if (rawQty === '' || rawQty === undefined || rawQty === null) continue
           const qty = parseFloat(rawQty)
           if (isNaN(qty)) continue
+          if (qty < 0) continue
 
           if (isLockedMonth(ym, horizonMonthsBack)) { skipped++; continue }
 
