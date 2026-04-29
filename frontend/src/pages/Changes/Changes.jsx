@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import {
-  fetchBusinessUnits, fetchCustomers, fetchChanges,
+  fetchBusinessUnits, fetchCustomers, fetchChanges, fetchMe,
 } from '../../api/sfms'
 import MonthPicker from '../../components/MonthPicker'
 
@@ -53,7 +53,11 @@ export default function Changes() {
   const [dateFrom,     setDateFrom]     = useState(sixMonthsBackYM())
   const [dateTo,       setDateTo]       = useState(todayYM())
 
-  const { data: bus       = [] } = useQuery({ queryKey: ['bus'],  queryFn: fetchBusinessUnits })
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: fetchMe })
+  const { data: allBUs    = [] } = useQuery({ queryKey: ['bus'],  queryFn: fetchBusinessUnits })
+  const bus = me?.role?.CanViewAllBU
+    ? allBUs
+    : allBUs.filter(bu => me?.bu_assignments?.some(a => a.BusinessUnitCode === bu.Code))
   const { data: customers = [] } = useQuery({
     queryKey: ['customers', buCode],
     queryFn:  () => fetchCustomers(buCode),
@@ -73,7 +77,7 @@ export default function Changes() {
     enabled: canLoad,
   })
 
-  const largeChanges = changes.filter(r => Math.abs(Number(r.QtyDelta)) > DELTA_THRESHOLD).length
+  const largeChanges = changes.filter(r => Math.abs(Number(r.QtyDelta)) >= DELTA_THRESHOLD).length
 
   function handleExport() {
     if (!changes.length) return
@@ -222,7 +226,7 @@ export default function Changes() {
                 <tbody>
                   {changes.map((r, i) => {
                     const delta    = Number(r.QtyDelta ?? 0)
-                    const isLarge  = Math.abs(delta) > DELTA_THRESHOLD
+                    const isLarge  = Math.abs(delta) >= DELTA_THRESHOLD
                     const deltaPos = delta > 0
                     const deltaNeg = delta < 0
 
