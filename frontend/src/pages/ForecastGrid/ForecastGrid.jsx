@@ -7,7 +7,7 @@
  *  - Tab key → moves to the next month cell (skips locked months)
  *  - Enter / click away → commits the inline quantity change
  */
-import { useState, useMemo, useCallback, useRef } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
@@ -542,7 +542,8 @@ map.get(itemNo).months[mk] = {
       {
         headerName: 'Item',
         field: 'itemNo',
-        width: 260,
+        flex: 1,
+        minWidth: 220,
         pinned: 'left',
         editable: false,
         filter: 'agTextColumnFilter',
@@ -583,6 +584,7 @@ map.get(itemNo).months[mk] = {
       headerName: formatMonth(ym),
       field: `months.${ym}.quantity`,
       width: 90,
+      suppressSizeToFit: true,
       type: 'numericColumn',
       // Only F rows in unlocked months are editable
       editable: params => params.data?.rowType === 'F' && !isLockedMonth(ym, horizonMonthsBack),
@@ -624,6 +626,7 @@ map.get(itemNo).months[mk] = {
       headerName: 'Units',
       field: 'rowTotal',
       width: 80,
+      suppressSizeToFit: true,
       type: 'numericColumn',
       editable: false,
       pinned: 'right',
@@ -636,6 +639,7 @@ map.get(itemNo).months[mk] = {
       headerName: 'Value',
       field: 'rowValue',
       width: 95,
+      suppressSizeToFit: true,
       type: 'numericColumn',
       editable: false,
       pinned: 'right',
@@ -662,6 +666,11 @@ map.get(itemNo).months[mk] = {
     }
     return [...fixed, ...monthCols, totalCol, valueCol]
   }, [months, currencySymbol, horizonMonthsBack])
+
+  // Re-fit columns when the month set changes (date range picker)
+  useEffect(() => {
+    gridRef.current?.api?.sizeColumnsToFit()
+  }, [months])
 
   // Keep a ref to latest rowData so onCellValueChanged always sees current entryNos
   const rowDataRef = useRef([])
@@ -1298,6 +1307,7 @@ map.get(itemNo).months[mk] = {
                 onGridReady={recalcTotals}
                 onRowDataUpdated={recalcTotals}
                 onFilterChanged={recalcTotals}
+                onGridSizeChanged={() => gridRef.current?.api?.sizeColumnsToFit()}
                 onCellValueChanged={onCellValueChanged}
                 onCellDoubleClicked={onCellDoubleClicked}
                 preventDefaultOnContextMenu={true}
