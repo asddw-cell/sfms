@@ -1293,7 +1293,7 @@ map.get(itemNo).months[mk] = {
         )}
 
         {canLoad && (
-          <div className="ag-theme-alpine" style={{ height: 520, width: '100%' }}>
+          <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', minHeight: 400, width: '100%' }}>
             {isLoading ? (
               <div className="loading">Loading forecast data…</div>
             ) : (
