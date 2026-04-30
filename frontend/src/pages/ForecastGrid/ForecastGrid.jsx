@@ -542,9 +542,8 @@ map.get(itemNo).months[mk] = {
       {
         headerName: 'Item',
         field: 'itemNo',
-        flex: 1,
+        flex: 2,
         minWidth: 220,
-        maxWidth: 420,
         pinned: 'left',
         editable: false,
         filter: 'agTextColumnFilter',
