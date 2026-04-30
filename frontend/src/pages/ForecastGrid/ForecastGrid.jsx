@@ -587,7 +587,6 @@ map.get(itemNo).months[mk] = {
       flex: 1,
       minWidth: 80,
       maxWidth: 130,
-      suppressSizeToFit: true,
       type: 'numericColumn',
       // Only F rows in unlocked months are editable
       editable: params => params.data?.rowType === 'F' && !isLockedMonth(ym, horizonMonthsBack),
@@ -1307,7 +1306,7 @@ map.get(itemNo).months[mk] = {
                 columnDefs={colDefs}
                 pinnedTopRowData={pinnedBottomRow}
                 suppressRowClickSelection
-                onGridReady={recalcTotals}
+                onGridReady={params => { recalcTotals(); params.api.sizeColumnsToFit() }}
                 onRowDataUpdated={recalcTotals}
                 onFilterChanged={recalcTotals}
                 onGridSizeChanged={() => gridRef.current?.api?.sizeColumnsToFit()}
