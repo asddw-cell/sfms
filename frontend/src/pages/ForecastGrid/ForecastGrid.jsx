@@ -544,6 +544,7 @@ map.get(itemNo).months[mk] = {
         field: 'itemNo',
         flex: 1,
         minWidth: 220,
+        maxWidth: 420,
         pinned: 'left',
         editable: false,
         filter: 'agTextColumnFilter',
@@ -583,7 +584,9 @@ map.get(itemNo).months[mk] = {
     const monthCols = months.map(ym => ({
       headerName: formatMonth(ym),
       field: `months.${ym}.quantity`,
-      width: 90,
+      flex: 1,
+      minWidth: 80,
+      maxWidth: 130,
       suppressSizeToFit: true,
       type: 'numericColumn',
       // Only F rows in unlocked months are editable
