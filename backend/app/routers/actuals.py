@@ -10,7 +10,7 @@ from datetime import date
 from decimal import Decimal
 from app.db import get_db
 from app.models import Actuals, ForecastData, Item, Customer, UserBusinessUnit, User
-from app.schemas import ActualsRowOut, ComparisonRow
+from app.schemas import ActualsRowOut, ComparisonRow, LYActualsRow
 from app.auth.dev_auth import get_current_user
 
 router = APIRouter(tags=["Actuals & Comparison"])
@@ -201,6 +201,92 @@ def get_comparison(
             ActualsType      = a["type"] if a else None,
             QtyVariance      = variance,
             QtyVariancePct   = variance_pct,
+        ))
+
+    return results
+
+
+@router.get("/api/v1/actuals/{bu_code}/last-year", response_model=list[LYActualsRow])
+def get_last_year_actuals(
+    bu_code:            str,
+    customer_code:      str        = Query(...),
+    date_from:          date | None = Query(default=None),
+    date_to:            date | None = Query(default=None),
+    sales_channel_code: str | None  = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns last year's invoiced actuals aggregated by item/month.
+    date_from/date_to are the current display range — the endpoint shifts them
+    back 12 months internally so the frontend always passes the current range.
+    ActualsDate in each response row is the original (last-year) date;
+    the frontend maps it forward by 12 months to get the display month key.
+    """
+    _check_bu_access(bu_code, current_user, db)
+
+    from dateutil.relativedelta import relativedelta
+    from sqlalchemy import text as sa_text
+    from app.models import Brand
+
+    ly_date_from = (date_from - relativedelta(months=12)) if date_from else None
+    ly_date_to   = (date_to   - relativedelta(months=12)) if date_to   else None
+
+    params: dict = {"bu": bu_code, "cust": customer_code}
+    date_filters  = ""
+    channel_filter = ""
+    if ly_date_from:
+        date_filters += " AND ActualsDate >= :date_from"
+        params["date_from"] = ly_date_from
+    if ly_date_to:
+        date_filters += " AND ActualsDate <= :date_to"
+        params["date_to"] = ly_date_to
+    if sales_channel_code:
+        channel_filter = " AND SalesChannelCode = :channel"
+        params["channel"] = sales_channel_code
+
+    sql = sa_text(f"""
+        SELECT
+            ItemNo,
+            SalesChannelCode,
+            DATEFROMPARTS(YEAR(ActualsDate), MONTH(ActualsDate), 1) AS ActualsMonth,
+            SUM(Quantity)           AS TotalQty,
+            SUM(Quantity * Price)   AS TotalValue
+        FROM tblActuals
+        WHERE BusinessUnitCode = :bu
+          AND CustomerCode     = :cust
+          AND ActualsType      = 'Invoiced'
+          {date_filters}
+          {channel_filter}
+        GROUP BY
+            ItemNo,
+            SalesChannelCode,
+            DATEFROMPARTS(YEAR(ActualsDate), MONTH(ActualsDate), 1)
+    """)
+
+    actuals_agg = db.execute(sql, params).fetchall()
+    if not actuals_agg:
+        return []
+
+    all_item_nos = list({row.ItemNo for row in actuals_agg})
+    items_bulk   = db.query(Item).filter(Item.ItemNo.in_(all_item_nos)).all()
+    item_cache   = {i.ItemNo: i for i in items_bulk}
+
+    brand_codes    = list({i.BrandCode for i in items_bulk if i.BrandCode})
+    brands_list    = db.query(Brand).filter(Brand.Code.in_(brand_codes)).all()
+    brand_name_map = {b.Code: b.Name for b in brands_list}
+
+    results: list[LYActualsRow] = []
+    for row in actuals_agg:
+        item = item_cache.get(row.ItemNo)
+        results.append(LYActualsRow(
+            ItemNo            = row.ItemNo,
+            ItemDescription   = item.Description if item else row.ItemNo,
+            BrandName         = brand_name_map.get(item.BrandCode) if item else None,
+            SalesChannelCode  = row.SalesChannelCode,
+            ActualsDate       = row.ActualsMonth,
+            ActualsQty        = Decimal(str(row.TotalQty)),
+            ActualsTotalValue = Decimal(str(row.TotalValue)),
         ))
 
     return results

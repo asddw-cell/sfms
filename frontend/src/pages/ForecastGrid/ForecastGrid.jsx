@@ -18,7 +18,7 @@ import {
   fetchBusinessUnits, fetchForecastTypes, fetchSalesChannels,
   fetchCustomers, fetchBrands, fetchPriceTypes, fetchCurrencies, fetchItems, fetchMe,
   fetchForecast, createForecastRow, updateForecastRow, deleteForecastRow, copyForecastToGM,
-  fetchComparison,
+  fetchComparison, fetchLYActuals,
 } from '../../api/sfms'
 import EditModal from '../../components/EditModal'
 import MultiSelect from '../../components/MultiSelect'
@@ -77,6 +77,7 @@ function ForecastCellRenderer(params) {
   const val    = params.value
   const isA    = params.data?.rowType === 'A'
   const isLE   = params.data?.rowType === 'LE'
+  const isLY   = params.data?.rowType === 'LY'
   const field  = params.colDef?.field
   const itemNo = params.data?.itemNo
 
@@ -89,6 +90,8 @@ function ForecastCellRenderer(params) {
   let color = 'inherit'
   if (isLE) {
     color = '#7D3C98'  // purple throughout — LE is always a single colour
+  } else if (isLY) {
+    color = '#1A5276'  // dark blue throughout — LY is always a single colour
   } else if (isA) {
     const rowData = params.context?.rowData ?? []
     const fRow    = rowData.find(r => r.itemNo === itemNo && r.rowType === 'F')
@@ -126,7 +129,7 @@ function ForecastCellRenderer(params) {
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
       height: '100%', width: '100%', padding: '0 8px', boxSizing: 'border-box',
-      fontStyle: (isA || isLE) ? 'italic' : 'normal',
+      fontStyle: (isA || isLE || isLY) ? 'italic' : 'normal',
       fontSize: 11,
       color,
     }}>
@@ -192,6 +195,7 @@ export default function ForecastGrid() {
   const [showGmCopy,   setShowGmCopy]   = useState(false)
   const [showActuals,  setShowActuals]  = useState(false)
   const [showLE,       setShowLE]       = useState(false)
+  const [showLY,       setShowLY]       = useState(false)
   const [importing,    setImporting]    = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importProgress, setImportProgress] = useState(null)
@@ -276,6 +280,21 @@ export default function ForecastGrid() {
     enabled: canLoad,
   })
 
+  // ── LY actuals query — last year's invoiced actuals for the same date range ──
+  const { data: lyActualsRows = [] } = useQuery({
+    queryKey: ['grid-ly-actuals', buCode, channelCode, customerCode, dateFrom, dateTo],
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: 'always',
+    queryFn: () => fetchLYActuals(buCode, {
+      customer_code:      customerCode,
+      sales_channel_code: channelCode,
+      date_from:          firstOfMonth(dateFrom),
+      date_to:            firstOfMonth(dateTo),
+    }),
+    enabled: canLoad,
+  })
+
   // ── Build month columns ────────────────────────────────────────────────────
   const months = useMemo(() => monthsBetween(dateFrom, dateTo), [dateFrom, dateTo])
 
@@ -331,6 +350,37 @@ map.get(itemNo).months[mk] = {
     }
     return map
   }, [actualsRows, channelCode])
+
+  // ── Pivot LY actuals rows → one LY row per item ──────────────────────────
+  // ActualsDate from the API is last year's date (e.g. 2025-04-01).
+  // Shift forward 12 months to get the display month key (e.g. 2026-04).
+  const lyActualsItemMap = useMemo(() => {
+    const map = new Map()
+    for (const ar of lyActualsRows) {
+      if (channelCode && ar.SalesChannelCode !== channelCode) continue
+      const itemNo = ar.ItemNo
+      if (!map.has(itemNo)) {
+        map.set(itemNo, {
+          itemNo,
+          description: ar.ItemDescription || itemNo,
+          brandName:   ar.BrandName || '',
+          rowType:     'LY',
+          months:      {},
+        })
+      }
+      if (ar.ActualsQty != null) {
+        const [y, m] = ar.ActualsDate.slice(0, 7).split('-').map(Number)
+        const mk = `${y + 1}-${String(m).padStart(2, '0')}`
+        if (months.includes(mk)) {
+          map.get(itemNo).months[mk] = {
+            quantity:   parseFloat(ar.ActualsQty),
+            totalValue: parseFloat(ar.ActualsTotalValue ?? 0),
+          }
+        }
+      }
+    }
+    return map
+  }, [lyActualsRows, channelCode, months])
 
   // ── Merge into paired F/A rows, one pair per item ─────────────────────────
   const rowData = useMemo(() => {
@@ -461,15 +511,37 @@ map.get(itemNo).months[mk] = {
         rowType: 'LE',
         months:  leMonths,
       })
+
+      // LY row — last year's invoiced actuals, shifted forward 12 months
+      // Only add for items that have a forecast row AND prior-year data
+      const lyEntry = lyActualsItemMap.get(itemNo)
+      if (fRow && lyEntry) {
+        const lyMonths = {}
+        for (const ym of months) {
+          const cell = lyEntry.months?.[ym]
+          if (cell?.quantity != null && cell.quantity !== 0) {
+            lyMonths[ym] = { quantity: cell.quantity, totalValue: cell.totalValue ?? 0 }
+          }
+          // Missing or zero months are omitted — renderer treats absence as blank
+        }
+        rows.push({
+          itemNo,
+          description,
+          brandName: lyEntry.brandName || brandName,
+          rowType: 'LY',
+          months:  lyMonths,
+        })
+      }
     }
     return rows
-  }, [forecastItemMap, actualsItemMap, months, selectedBrands])
+  }, [forecastItemMap, actualsItemMap, months, selectedBrands, lyActualsItemMap])
 
   // ── Row totals ─────────────────────────────────────────────────────────────
   const rowDataWithTotals = useMemo(() => {
     const source = rowData.filter(r => {
       if (r.rowType === 'A')  return showActuals
       if (r.rowType === 'LE') return showLE
+      if (r.rowType === 'LY') return showLY
       return true  // F rows always visible
     })
     const withTotals = source.map(row => ({
@@ -477,7 +549,7 @@ map.get(itemNo).months[mk] = {
       rowTotal: months.reduce((sum, ym) => sum + (row.months?.[ym]?.quantity ?? 0), 0),
       rowValue: months.reduce((sum, ym) => {
         const cell = row.months?.[ym]
-        if (row.rowType === 'A' || row.rowType === 'LE') return sum + (cell?.totalValue ?? 0)
+        if (row.rowType === 'A' || row.rowType === 'LE' || row.rowType === 'LY') return sum + (cell?.totalValue ?? 0)
         return sum + ((cell?.quantity ?? 0) * (cell?.price ?? 0))
       }, 0),
     }))
@@ -490,11 +562,11 @@ map.get(itemNo).months[mk] = {
       const next = withTotals[i + 1]
       const isBrandBoundary = !next || next.brandName !== row.brandName
       // Border on the last visible row of each brand group
-      const lastVisibleType = showLE ? 'LE' : showActuals ? 'A' : 'F'
+      const lastVisibleType = showLY ? 'LY' : showLE ? 'LE' : showActuals ? 'A' : 'F'
       row.isLastInBrand = row.rowType === lastVisibleType && isBrandBoundary
     }
     return withTotals
-  }, [rowData, months, showActuals, showLE])
+  }, [rowData, months, showActuals, showLE, showLY])
 
   // ── Set of item numbers already in the grid (for AddItemsModal exclusion) ──
   const existingItemNos = useMemo(
@@ -572,8 +644,9 @@ map.get(itemNo).months[mk] = {
         cellStyle: params => ({
           fontWeight: 700,
           fontSize: 11,
-          color: params.value === 'F' ? 'var(--c-primary)'
+          color: params.value === 'F'  ? 'var(--c-primary)'
                : params.value === 'LE' ? '#7D3C98'
+               : params.value === 'LY' ? '#1A5276'
                : 'var(--c-success)',
           textAlign: 'center',
           padding: 0,
@@ -588,7 +661,7 @@ map.get(itemNo).months[mk] = {
       maxWidth: 130,
       type: 'numericColumn',
       // Only F rows in unlocked months are editable
-      editable: params => params.data?.rowType === 'F' && !isLockedMonth(ym, horizonMonthsBack),
+      editable: params => params.data?.rowType === 'F' && !isLockedMonth(ym, horizonMonthsBack) && params.data?.rowType !== 'LY',
       valueParser: params => {
         if (params.newValue === '' || params.newValue == null) return null
         const n = Number(params.newValue)
@@ -600,7 +673,8 @@ map.get(itemNo).months[mk] = {
         return true
       },
       cellStyle: params => {
-        if (params.data?.rowType === 'A') return { background: '#f9fdfb', padding: 0 }
+        if (params.data?.rowType === 'A')  return { background: '#f9fdfb', padding: 0 }
+        if (params.data?.rowType === 'LY') return { background: '#e8f4f8', padding: 0 }
         if (isLockedMonth(ym, horizonMonthsBack)) return { background: 'var(--c-locked)', padding: 0 }
         if (params.value != null && params.value !== 0) return { background: '#eaf4fb', fontWeight: 600, padding: 0 }
         return { padding: 0 }
@@ -610,6 +684,7 @@ map.get(itemNo).months[mk] = {
       tooltipValueGetter: params => {
         if (params.node?.rowPinned) return null           // no tooltip on total row
         if (params.data?.rowType === 'LE') return null    // no tooltip on LE rows
+        if (params.data?.rowType === 'LY') return null    // no tooltip on LY rows
         if (params.data?.rowType === 'A') {
           const fRow = params.context?.rowData?.find(r => r.itemNo === params.data?.itemNo && r.rowType === 'F')
           const fQty = fRow?.months?.[ym]?.quantity
@@ -741,6 +816,7 @@ map.get(itemNo).months[mk] = {
     if (isLockedMonth(ym, horizonMonthsBack)) return
     if (params.data?.rowType === 'A')  return  // actuals are read-only
     if (params.data?.rowType === 'LE') return  // LE rows are read-only
+    if (params.data?.rowType === 'LY') return  // LY rows are read-only
 
     // Stop any active inline edit before opening modal
     gridRef.current?.api?.stopEditing(true)
@@ -1208,6 +1284,18 @@ map.get(itemNo).months[mk] = {
               {showLE ? '✓ LE' : 'LE'}
             </button>
 
+            <button
+              className="btn btn-ghost"
+              onClick={() => setShowLY(v => !v)}
+              style={{
+                borderColor: showLY ? '#1A5276' : 'var(--c-border)',
+                color:       showLY ? '#1A5276' : 'var(--c-muted)',
+                fontWeight:  showLY ? 700 : 400,
+              }}
+            >
+              {showLY ? '✓ LY' : 'LY'}
+            </button>
+
             {(me?.role?.CanManageRefData || me?.role?.CanManageUsers) &&
               !fts.find(f => String(f.Code) === ftCode)?.Name?.toLowerCase().includes('gm') && (
               <button
@@ -1340,6 +1428,7 @@ map.get(itemNo).months[mk] = {
                   }
                   if (params.data?.rowType === 'A')  return { background: '#f7fdf9', borderBottom: '1px solid #d5e8d4' }
                   if (params.data?.rowType === 'LE') return { background: '#fdf5ff', borderBottom: '1px solid #d7bde2' }
+                  if (params.data?.rowType === 'LY') return { background: '#eaf6fd', borderBottom: '1px solid #aed6f1' }
                 }}
               />
             )}

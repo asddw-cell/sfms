@@ -51,3 +51,6 @@ export const fetchChanges = (buCode, params) =>
 // ── Actuals & Comparison ──────────────────────────────────────────────────────
 export const fetchComparison = (buCode, params) =>
   client.get(`/comparison/${buCode}`, { params }).then(r => r.data)
+
+export const fetchLYActuals = (buCode, params) =>
+  client.get(`/actuals/${buCode}/last-year`, { params }).then(r => r.data)

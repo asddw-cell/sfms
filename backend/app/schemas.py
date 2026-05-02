@@ -208,3 +208,14 @@ class ComparisonRow(BaseModel):
     ActualsType:      Optional[str]
     QtyVariance:      Optional[Decimal]
     QtyVariancePct:   Optional[Decimal]
+
+
+# ── Last Year Actuals ──────────────────────────────────────────────────────────
+class LYActualsRow(BaseModel):
+    ItemNo:            str
+    ItemDescription:   str
+    BrandName:         Optional[str] = None
+    SalesChannelCode:  str
+    ActualsDate:       date   # original last-year date — frontend shifts +12 months
+    ActualsQty:        Decimal
+    ActualsTotalValue: Decimal
