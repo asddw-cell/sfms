@@ -9,7 +9,6 @@ import * as XLSX from 'xlsx'
 import {
   fetchBusinessUnits, fetchCustomers, fetchChanges, fetchForecastTypes, fetchMe,
 } from '../../api/sfms'
-import MonthPicker from '../../components/MonthPicker'
 
 const DELTA_THRESHOLD = 500
 
@@ -36,14 +35,13 @@ function fmtDateTime(dtStr) {
   })
 }
 
-function todayYM() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+function todayISO() {
+  return new Date().toISOString().slice(0, 10)
 }
-function sixMonthsBackYM() {
+function thirtyDaysBackISO() {
   const d = new Date()
-  d.setMonth(d.getMonth() - 6)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  d.setDate(d.getDate() - 30)
+  return d.toISOString().slice(0, 10)
 }
 
 export default function Changes() {
@@ -51,8 +49,8 @@ export default function Changes() {
   const [customerCode, setCustomerCode] = useState('')
   const [ftCode,       setFtCode]       = useState('')
   const [itemNo,       setItemNo]       = useState('')
-  const [dateFrom,     setDateFrom]     = useState(sixMonthsBackYM())
-  const [dateTo,       setDateTo]       = useState(todayYM())
+  const [changedFrom,  setChangedFrom]  = useState(thirtyDaysBackISO())
+  const [changedTo,    setChangedTo]    = useState(todayISO())
   const [showSystem,   setShowSystem]   = useState(false)
 
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: fetchMe })
@@ -70,10 +68,10 @@ export default function Changes() {
   const canLoad = !!buCode
 
   const { data: changes = [], isLoading, error } = useQuery({
-    queryKey: ['changes', buCode, customerCode, ftCode, itemNo, dateFrom, dateTo, showSystem],
+    queryKey: ['changes', buCode, customerCode, ftCode, itemNo, changedFrom, changedTo, showSystem],
     queryFn: () => fetchChanges(buCode, {
-      date_from:          dateFrom ? dateFrom + '-01' : undefined,
-      date_to:            dateTo   ? dateTo   + '-01' : undefined,
+      changed_from:       changedFrom || undefined,
+      changed_to:         changedTo   || undefined,
       customer_code:      customerCode        || undefined,
       item_no:            itemNo              || undefined,
       forecast_type_code: ftCode              || undefined,
@@ -162,13 +160,13 @@ export default function Changes() {
           </div>
 
           <div className="field-group">
-            <label>Forecast period from</label>
-            <MonthPicker value={dateFrom} onChange={setDateFrom} />
+            <label>Change date from</label>
+            <input type="date" value={changedFrom} onChange={e => setChangedFrom(e.target.value)} />
           </div>
 
           <div className="field-group">
-            <label>Forecast period to</label>
-            <MonthPicker value={dateTo} onChange={setDateTo} />
+            <label>Change date to</label>
+            <input type="date" value={changedTo} onChange={e => setChangedTo(e.target.value)} />
           </div>
 
           <div className="field-group" style={{ justifyContent: 'flex-end' }}>

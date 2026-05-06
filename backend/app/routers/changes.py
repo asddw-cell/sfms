@@ -49,8 +49,8 @@ class ChangeRow(BaseModel):
 @router.get("/{bu_code}", response_model=list[ChangeRow])
 def get_changes(
     bu_code:            str,
-    date_from:          Optional[date] = Query(default=None),
-    date_to:            Optional[date] = Query(default=None),
+    changed_from:       Optional[date] = Query(default=None),
+    changed_to:         Optional[date] = Query(default=None),
     customer_code:      Optional[str]  = Query(default=None),
     item_no:            Optional[str]  = Query(default=None),
     forecast_type_code: Optional[int]  = Query(default=None),
@@ -72,14 +72,15 @@ def get_changes(
     where_clauses      = ["f.BusinessUnitCode = :bu"]
     where_clauses_hist = ["h.BusinessUnitCode = :bu"]
 
-    if date_from:
-        where_clauses.append("f.ForecastDate >= :date_from")
-        where_clauses_hist.append("h.ForecastDate >= :date_from")
-        params["date_from"] = date_from
-    if date_to:
-        where_clauses.append("f.ForecastDate <= :date_to")
-        where_clauses_hist.append("h.ForecastDate <= :date_to")
-        params["date_to"] = date_to
+    if changed_from:
+        where_clauses.append("f.SysStartTime >= :changed_from")
+        where_clauses_hist.append("h.SysStartTime >= :changed_from")
+        params["changed_from"] = changed_from
+    if changed_to:
+        # Add 1 day so "to" date is inclusive of the full day
+        where_clauses.append("f.SysStartTime < DATEADD(day, 1, :changed_to)")
+        where_clauses_hist.append("h.SysStartTime < DATEADD(day, 1, :changed_to)")
+        params["changed_to"] = changed_to
     if customer_code:
         where_clauses.append("f.CustomerCode = :customer_code")
         where_clauses_hist.append("h.CustomerCode = :customer_code")
