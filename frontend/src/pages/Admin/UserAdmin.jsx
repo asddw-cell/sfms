@@ -94,7 +94,7 @@ function BUCustomerPanel({ userId, buCode, assignedCodes, roleDefault, onUpdate 
 
       <div style={{ fontSize: 12, color: 'var(--c-muted)', marginBottom: 8 }}>
         Customer access —{' '}
-        <strong style={{ color: selected.size === 0 ? '#1e8449' : 'var(--c-text)' }}>
+        <strong style={{ color: selected.size === 0 ? 'var(--c-success)' : 'var(--c-text)' }}>
           {selected.size === 0 ? 'All customers (unrestricted)' : `${selected.size} of ${customers.length} customers`}
         </strong>
       </div>
@@ -107,7 +107,7 @@ function BUCustomerPanel({ userId, buCode, assignedCodes, roleDefault, onUpdate 
         />
         <button
           onClick={() => setSelected(new Set())}
-          style={{ fontSize: 11, padding: '0 10px', height: 28, border: '1px solid var(--c-border)', borderRadius: 4, background: selected.size === 0 ? '#d5f5e3' : 'var(--c-surface)', cursor: 'pointer', color: selected.size === 0 ? '#1e8449' : 'var(--c-muted)' }}
+          style={{ fontSize: 11, padding: '0 10px', height: 28, border: '1px solid var(--c-border)', borderRadius: 4, background: selected.size === 0 ? 'var(--c-alert-success-bg)' : 'var(--c-surface)', cursor: 'pointer', color: selected.size === 0 ? 'var(--c-success)' : 'var(--c-muted)' }}
         >
           Unrestricted
         </button>
@@ -117,7 +117,7 @@ function BUCustomerPanel({ userId, buCode, assignedCodes, roleDefault, onUpdate 
         {filtered.map((c, i) => (
           <label key={c.Code} style={{
             display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 13,
-            background: selected.has(c.Code) ? '#eaf4fb' : i % 2 === 0 ? 'var(--c-surface)' : 'transparent',
+            background: selected.has(c.Code) ? 'var(--c-cell-edited-bg)' : i % 2 === 0 ? 'var(--c-surface)' : 'transparent',
             borderBottom: '1px solid var(--c-border)',
           }}>
             <input
@@ -248,7 +248,7 @@ function UserDetailPanel({ user, roles, allBUs, onClose, onSaved }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--c-muted)' }}>✕</button>
         </div>
 
-        {error && <div style={{ background: '#fdecea', border: '1px solid #f1948a', borderRadius: 4, padding: '8px 12px', fontSize: 12, color: '#c0392b', marginBottom: 12 }}>{error}</div>}
+        {error && <div style={{ background: 'var(--c-alert-danger-bg)', border: '1px solid var(--c-alert-danger-border)', borderRadius: 4, padding: '8px 12px', fontSize: 12, color: 'var(--c-danger)', marginBottom: 12 }}>{error}</div>}
 
         {/* Core fields */}
         <div style={{ display: 'grid', gap: 12, marginBottom: 20 }}>
@@ -312,7 +312,7 @@ function UserDetailPanel({ user, roles, allBUs, onClose, onSaved }) {
                     {availableBUs.map(bu => <option key={bu.Code} value={bu.Code}>{bu.Name} ({bu.Code})</option>)}
                   </select>
                   <button onClick={addBU} disabled={!newBUCode}
-                    style={{ padding: '0 14px', height: 32, background: '#1e8449', color: '#fff', border: 'none', borderRadius: 4, fontSize: 12, cursor: 'pointer' }}>
+                    style={{ padding: '0 14px', height: 32, background: 'var(--c-success)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 12, cursor: 'pointer' }}>
                     Assign
                   </button>
                   <button onClick={() => { setAddingBU(false); setNewBUCode('') }}
@@ -330,7 +330,7 @@ function UserDetailPanel({ user, roles, allBUs, onClose, onSaved }) {
                 <div key={ba.BusinessUnitCode} style={{ marginBottom: 4 }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
                     <button onClick={() => removeBU(ba.BusinessUnitCode)}
-                      style={{ fontSize: 11, padding: '2px 8px', background: 'none', border: '1px solid #f1948a', borderRadius: 4, color: '#c0392b', cursor: 'pointer' }}>
+                      style={{ fontSize: 11, padding: '2px 8px', background: 'none', border: '1px solid var(--c-alert-danger-border)', borderRadius: 4, color: 'var(--c-danger)', cursor: 'pointer' }}>
                       Remove {ba.BusinessUnitCode}
                     </button>
                   </div>
@@ -429,14 +429,14 @@ export default function UserAdmin() {
               >
                 <td style={{ padding: '10px 12px', fontWeight: 500 }}>
                   {u.DisplayName}
-                  {!u.IsActive && <span style={{ marginLeft: 6, fontSize: 10, background: '#f2f3f4', color: '#999', padding: '1px 6px', borderRadius: 8 }}>Inactive</span>}
+                  {!u.IsActive && <span style={{ marginLeft: 6, fontSize: 10, background: 'var(--c-locked)', color: 'var(--c-muted)', padding: '1px 6px', borderRadius: 8 }}>Inactive</span>}
                 </td>
                 <td style={{ padding: '10px 12px', color: 'var(--c-muted)', fontSize: 12 }}>{u.Username}</td>
                 <td style={{ padding: '10px 12px' }}><RoleBadge name={u.RoleName || ''} /></td>
                 <td style={{ padding: '10px 12px' }}>
                   {u.bu_assignments?.length > 0
                     ? u.bu_assignments.map(b => (
-                        <span key={b.BusinessUnitCode} style={{ fontSize: 11, marginRight: 4, padding: '1px 6px', background: '#eaf4fb', borderRadius: 8, color: '#1a5276' }}>
+                        <span key={b.BusinessUnitCode} style={{ fontSize: 11, marginRight: 4, padding: '1px 6px', background: 'var(--c-cell-edited-bg)', borderRadius: 8, color: 'var(--c-ly-color)' }}>
                           {b.BusinessUnitCode}
                           {b.customer_assignments?.length > 0 && ` (${b.customer_assignments.length})`}
                         </span>
@@ -445,7 +445,7 @@ export default function UserAdmin() {
                   }
                 </td>
                 <td style={{ padding: '10px 12px' }}>
-                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: u.IsActive ? '#d5f5e3' : '#f2f3f4', color: u.IsActive ? '#1e8449' : '#999' }}>
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: u.IsActive ? 'var(--c-alert-success-bg)' : 'var(--c-locked)', color: u.IsActive ? 'var(--c-success)' : 'var(--c-muted)' }}>
                     {u.IsActive ? 'Active' : 'Inactive'}
                   </span>
                 </td>

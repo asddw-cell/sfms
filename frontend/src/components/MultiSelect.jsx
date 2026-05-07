@@ -169,10 +169,10 @@ export default function MultiSelect({ label, options, selected, onChange, placeh
                   padding: '7px 12px',
                   cursor: 'pointer',
                   fontSize: 13,
-                  background: selected.includes(opt.value) ? '#eaf4fb' : 'transparent',
+                  background: selected.includes(opt.value) ? 'var(--c-cell-edited-bg)' : 'transparent',
                 }}
-                onMouseEnter={e => e.currentTarget.style.background = selected.includes(opt.value) ? '#daedf7' : 'var(--c-bg)'}
-                onMouseLeave={e => e.currentTarget.style.background = selected.includes(opt.value) ? '#eaf4fb' : 'transparent'}
+                onMouseEnter={e => e.currentTarget.style.background = selected.includes(opt.value) ? 'var(--c-cell-edited-bg)' : 'var(--c-bg)'}
+                onMouseLeave={e => e.currentTarget.style.background = selected.includes(opt.value) ? 'var(--c-cell-edited-bg)' : 'transparent'}
               >
                 <input
                   type="checkbox"

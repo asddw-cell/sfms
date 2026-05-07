@@ -134,12 +134,12 @@ export default function GmCopyModal({
             </div>
 
             <div style={{
-              background: '#fdf0ee',
-              border: '1px solid #f1948a',
+              background: 'var(--c-alert-danger-bg)',
+              border: '1px solid var(--c-alert-danger-border)',
               borderRadius: 'var(--radius)',
               padding: '10px 14px',
               fontSize: 12,
-              color: '#922b21',
+              color: 'var(--c-danger)',
               marginTop: 16,
               marginBottom: 12,
             }}>

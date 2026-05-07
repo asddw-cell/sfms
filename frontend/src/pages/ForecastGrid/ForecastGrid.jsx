@@ -26,6 +26,7 @@ import AddItemsModal from '../../components/AddItemsModal'
 import GmCopyModal          from '../../components/GmCopyModal'
 import ForecastSummaryPanel from '../../components/ForecastSummaryPanel'
 import MonthPicker from '../../components/MonthPicker'
+import { useTheme } from '../../ThemeContext'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function monthKey(dateStr) { return dateStr ? dateStr.slice(0, 7) : '' }
@@ -89,9 +90,9 @@ function ForecastCellRenderer(params) {
 
   let color = 'inherit'
   if (isLE) {
-    color = '#7D3C98'  // purple throughout — LE is always a single colour
+    color = 'var(--c-le-color)'
   } else if (isLY) {
-    color = '#1A5276'  // dark blue throughout — LY is always a single colour
+    color = 'var(--c-ly-color)'
   } else if (isA) {
     const rowData = params.context?.rowData ?? []
     const fRow    = rowData.find(r => r.itemNo === itemNo && r.rowType === 'F')
@@ -100,13 +101,10 @@ function ForecastCellRenderer(params) {
       : null
     const aQty = val ?? 0
     if (fQty != null && fQty !== 0) {
-      color = aQty >= fQty ? '#1e8449'   // green — met or exceeded forecast
-                           : '#c0392b'   // red — below forecast
+      color = aQty >= fQty ? 'var(--c-success)' : 'var(--c-danger)'
     } else {
       // No forecast to compare — colour by sign of actuals value
-      color = (val ?? 0) < 0 ? '#c0392b'   // red — negative actuals
-            : (val ?? 0) > 0 ? '#1e8449'   // green — positive actuals
-            :                  '#1e8449'   // zero — green
+      color = (val ?? 0) < 0 ? 'var(--c-danger)' : 'var(--c-success)'
     }
   }
 
@@ -155,6 +153,7 @@ function saveFilters(filters) {
 export default function ForecastGrid() {
   const qc      = useQueryClient()
   const gridRef = useRef()
+  const { theme } = useTheme()
 
   // Initialise from localStorage, falling back to defaults
   const _f = loadFilters()
@@ -645,8 +644,8 @@ map.get(itemNo).months[mk] = {
           fontWeight: 700,
           fontSize: 11,
           color: params.value === 'F'  ? 'var(--c-primary)'
-               : params.value === 'LE' ? '#7D3C98'
-               : params.value === 'LY' ? '#1A5276'
+               : params.value === 'LE' ? 'var(--c-le-color)'
+               : params.value === 'LY' ? 'var(--c-ly-color)'
                : 'var(--c-success)',
           textAlign: 'center',
           padding: 0,
@@ -673,10 +672,10 @@ map.get(itemNo).months[mk] = {
         return true
       },
       cellStyle: params => {
-        if (params.data?.rowType === 'A')  return { background: '#f9fdfb', padding: 0 }
-        if (params.data?.rowType === 'LY') return { background: '#e8f4f8', padding: 0 }
+        if (params.data?.rowType === 'A')  return { background: 'var(--c-row-a-bg)', padding: 0 }
+        if (params.data?.rowType === 'LY') return { background: 'var(--c-row-ly-bg)', padding: 0 }
         if (isLockedMonth(ym, horizonMonthsBack)) return { background: 'var(--c-locked)', padding: 0 }
-        if (params.value != null && params.value !== 0) return { background: '#eaf4fb', fontWeight: 600, padding: 0 }
+        if (params.value != null && params.value !== 0) return { background: 'var(--c-cell-edited-bg)', fontWeight: 600, padding: 0 }
         return { padding: 0 }
       },
       cellRendererParams: { ym, locked: isLockedMonth(ym, horizonMonthsBack) },
@@ -707,8 +706,8 @@ map.get(itemNo).months[mk] = {
       editable: false,
       pinned: 'right',
       cellStyle: params => params.data?.rowType === 'A'
-        ? { background: '#f9fdfb', padding: 0 }
-        : { fontWeight: 700, background: '#f0f3f7', padding: 0 },
+        ? { background: 'var(--c-row-a-bg)', padding: 0 }
+        : { fontWeight: 700, background: 'var(--c-hover-row)', padding: 0 },
       cellRenderer: ForecastCellRenderer,
     }
     const valueCol = {
@@ -720,8 +719,8 @@ map.get(itemNo).months[mk] = {
       editable: false,
       pinned: 'right',
       cellStyle: params => params.data?.rowType === 'A'
-        ? { background: '#f9fdfb', padding: 0, fontStyle: 'italic' }
-        : { fontWeight: 700, background: '#eaf0fb', padding: 0 },
+        ? { background: 'var(--c-row-a-bg)', padding: 0, fontStyle: 'italic' }
+        : { fontWeight: 700, background: 'var(--c-row-pinned-bg)', padding: 0 },
       cellRenderer: params => {
         if (params.value == null) return null
         const isA = params.data?.rowType === 'A' || params.data?.rowType === 'LE'
@@ -1276,8 +1275,8 @@ map.get(itemNo).months[mk] = {
               className="btn btn-ghost"
               onClick={() => setShowLE(v => !v)}
               style={{
-                borderColor: showLE ? '#7D3C98' : 'var(--c-border)',
-                color:       showLE ? '#7D3C98' : 'var(--c-muted)',
+                borderColor: showLE ? 'var(--c-le-color)' : 'var(--c-border)',
+                color:       showLE ? 'var(--c-le-color)' : 'var(--c-muted)',
                 fontWeight:  showLE ? 700 : 400,
               }}
             >
@@ -1288,8 +1287,8 @@ map.get(itemNo).months[mk] = {
               className="btn btn-ghost"
               onClick={() => setShowLY(v => !v)}
               style={{
-                borderColor: showLY ? '#1A5276' : 'var(--c-border)',
-                color:       showLY ? '#1A5276' : 'var(--c-muted)',
+                borderColor: showLY ? 'var(--c-ly-color)' : 'var(--c-border)',
+                color:       showLY ? 'var(--c-ly-color)' : 'var(--c-muted)',
                 fontWeight:  showLY ? 700 : 400,
               }}
             >
@@ -1357,8 +1356,8 @@ map.get(itemNo).months[mk] = {
         {fetchError && <div className="error-banner">{fetchError.message}</div>}
         {importResult && (
           <div style={{
-            background: importResult.errors.length ? '#fdf0ee' : '#eafaf1',
-            border: `1px solid ${importResult.errors.length ? '#f1948a' : '#a9dfbf'}`,
+            background: importResult.errors.length ? 'var(--c-alert-danger-bg)' : 'var(--c-alert-success-bg)',
+            border: `1px solid ${importResult.errors.length ? 'var(--c-alert-danger-border)' : 'var(--c-alert-success-border)'}`,
             borderRadius: 'var(--radius)', padding: '8px 14px',
             fontSize: 13, marginBottom: 10,
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -1381,7 +1380,7 @@ map.get(itemNo).months[mk] = {
         )}
 
         {canLoad && (
-          <div className="ag-theme-alpine" style={{ height: 'calc(100vh - 320px)', minHeight: 400, width: '100%' }}>
+          <div className={`ag-theme-alpine${theme === 'dark' ? '-dark' : ''}`} style={{ height: 'calc(100vh - 320px)', minHeight: 400, width: '100%' }}>
             {isLoading ? (
               <div className="loading">Loading forecast data…</div>
             ) : (
@@ -1421,14 +1420,14 @@ map.get(itemNo).months[mk] = {
                 rowHeight={28}
                 headerHeight={34}
                 getRowStyle={params => {
-                  if (params.node.rowPinned) return { background: '#eaf0fb', fontWeight: 700, borderBottom: '2px solid #2e86c1' }
+                  if (params.node.rowPinned) return { background: 'var(--c-row-pinned-bg)', fontWeight: 700, borderBottom: '2px solid var(--c-row-pinned-border)' }
                   if (params.data?.isLastInBrand) {
                     const isF = params.data?.rowType === 'F'
-                    return { background: isF ? 'transparent' : '#f7fdf9', borderBottom: '3px solid #a9cce3' }
+                    return { background: isF ? 'transparent' : 'var(--c-row-a-bg)', borderBottom: '3px solid var(--c-row-pinned-border)' }
                   }
-                  if (params.data?.rowType === 'A')  return { background: '#f7fdf9', borderBottom: '1px solid #d5e8d4' }
-                  if (params.data?.rowType === 'LE') return { background: '#fdf5ff', borderBottom: '1px solid #d7bde2' }
-                  if (params.data?.rowType === 'LY') return { background: '#eaf6fd', borderBottom: '1px solid #aed6f1' }
+                  if (params.data?.rowType === 'A')  return { background: 'var(--c-row-a-bg)', borderBottom: '1px solid var(--c-row-a-border)' }
+                  if (params.data?.rowType === 'LE') return { background: 'var(--c-row-le-bg)', borderBottom: '1px solid var(--c-border)' }
+                  if (params.data?.rowType === 'LY') return { background: 'var(--c-row-ly-bg)', borderBottom: '1px solid var(--c-border)' }
                 }}
               />
             )}

@@ -209,8 +209,8 @@ export default function Changes() {
               </span>
               {largeChanges > 0 && (
                 <span style={{
-                  background: '#fdf0ee', color: '#c0392b',
-                  border: '1px solid #f1948a',
+                  background: 'var(--c-alert-danger-bg)', color: 'var(--c-danger)',
+                  border: '1px solid var(--c-alert-danger-border)',
                   borderRadius: 'var(--radius)', padding: '3px 10px',
                   fontWeight: 600, fontSize: 12,
                 }}>
@@ -253,7 +253,7 @@ export default function Changes() {
                     const deltaNeg = delta < 0
 
                     return (
-                      <tr key={i} style={isLarge ? { background: '#fef9f9' } : {}}>
+                      <tr key={i} style={isLarge ? { background: 'var(--c-alert-danger-bg)' } : {}}>
                         <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
                           {fmtDateTime(r.ChangedAt)}
                         </td>
@@ -289,9 +289,9 @@ export default function Changes() {
                           <span style={{
                             fontWeight: 700,
                             color: isLarge
-                              ? '#c0392b'
-                              : deltaPos ? 'var(--c-success)' : deltaNeg ? '#c0392b' : 'var(--c-muted)',
-                            background: isLarge ? '#fdf0ee' : 'transparent',
+                              ? 'var(--c-danger)'
+                              : deltaPos ? 'var(--c-success)' : deltaNeg ? 'var(--c-danger)' : 'var(--c-muted)',
+                            background: isLarge ? 'var(--c-alert-danger-bg)' : 'transparent',
                             borderRadius: 3,
                             padding: isLarge ? '2px 6px' : 0,
                             display: 'inline-block',

@@ -181,14 +181,14 @@ export default function AddItemsModal({
                   display: 'flex', alignItems: 'center', gap: 10,
                   padding: '8px 12px', cursor: 'pointer', fontSize: 13,
                   borderBottom: '1px solid var(--c-border)',
-                  background: selected.includes(item.ItemNo) ? '#eaf4fb' : 'transparent',
+                  background: selected.includes(item.ItemNo) ? 'var(--c-cell-edited-bg)' : 'transparent',
                 }}
                 onMouseEnter={e => {
                   if (!selected.includes(item.ItemNo))
                     e.currentTarget.style.background = 'var(--c-bg)'
                 }}
                 onMouseLeave={e => {
-                  e.currentTarget.style.background = selected.includes(item.ItemNo) ? '#eaf4fb' : 'transparent'
+                  e.currentTarget.style.background = selected.includes(item.ItemNo) ? 'var(--c-cell-edited-bg)' : 'transparent'
                 }}
               >
                 <input

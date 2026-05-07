@@ -81,7 +81,7 @@ export default function DevUserSwitcher() {
             </div>
           )}
           {error && (
-            <div style={{ padding: '10px 12px', fontSize: 12, color: '#c0392b' }}>
+            <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--c-danger)' }}>
               Error: {error.message}
             </div>
           )}
@@ -91,12 +91,12 @@ export default function DevUserSwitcher() {
               onClick={() => switchUser(u.Username)}
               style={{
                 padding: '9px 12px', cursor: 'pointer', fontSize: 13,
-                background: u.Username === currentUser ? '#EAF0FB' : 'transparent',
+                background: u.Username === currentUser ? 'var(--c-cell-edited-bg)' : 'transparent',
                 borderBottom: '1px solid var(--c-border)',
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               }}
-              onMouseEnter={e => e.currentTarget.style.background = u.Username === currentUser ? '#daedf7' : 'var(--c-bg)'}
-              onMouseLeave={e => e.currentTarget.style.background = u.Username === currentUser ? '#EAF0FB' : 'transparent'}
+              onMouseEnter={e => e.currentTarget.style.background = u.Username === currentUser ? 'var(--c-cell-edited-bg)' : 'var(--c-bg)'}
+              onMouseLeave={e => e.currentTarget.style.background = u.Username === currentUser ? 'var(--c-cell-edited-bg)' : 'transparent'}
             >
               <div>
                 <div style={{ fontWeight: u.Username === currentUser ? 600 : 400 }}>
@@ -108,7 +108,7 @@ export default function DevUserSwitcher() {
               </div>
               <span style={{
                 fontSize: 11, padding: '2px 7px',
-                background: '#e8f4fd', color: '#1a5276',
+                background: 'var(--c-cell-edited-bg)', color: 'var(--c-ly-color)',
                 borderRadius: 10, fontWeight: 600,
               }}>
                 {u.RoleName || u.RoleCode}
