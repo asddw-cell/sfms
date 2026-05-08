@@ -643,7 +643,7 @@ map.get(itemNo).months[mk] = {
         cellStyle: params => ({
           fontWeight: 700,
           fontSize: 11,
-          color: params.value === 'F'  ? 'var(--c-primary)'
+          color: params.value === 'F'  ? 'var(--c-accent)'
                : params.value === 'LE' ? 'var(--c-le-color)'
                : params.value === 'LY' ? 'var(--c-ly-color)'
                : 'var(--c-success)',
@@ -732,7 +732,7 @@ map.get(itemNo).months[mk] = {
             height: '100%', padding: '0 8px', boxSizing: 'border-box',
             fontSize: 11,
             fontStyle: isA ? 'italic' : 'normal',
-            color: isA ? 'var(--c-muted)' : 'var(--c-primary)',
+            color: isA ? 'var(--c-muted)' : 'var(--c-accent)',
           }}>
             {currencySymbol}{formatted}
           </div>
