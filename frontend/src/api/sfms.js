@@ -54,3 +54,16 @@ export const fetchComparison = (buCode, params) =>
 
 export const fetchLYActuals = (buCode, params) =>
   client.get(`/actuals/${buCode}/last-year`, { params }).then(r => r.data)
+
+// ── Supply Horizon Admin ──────────────────────────────────────────────────────
+export const fetchSupplyHorizons = () =>
+  client.get('/admin/supply-horizon').then(r => r.data)
+
+export const createSupplyHorizon = (payload) =>
+  client.post('/admin/supply-horizon', payload).then(r => r.data)
+
+export const updateSupplyHorizon = (horizonId, payload) =>
+  client.put(`/admin/supply-horizon/${horizonId}`, payload).then(r => r.data)
+
+export const deactivateSupplyHorizon = (horizonId) =>
+  client.delete(`/admin/supply-horizon/${horizonId}`).then(r => r.data)

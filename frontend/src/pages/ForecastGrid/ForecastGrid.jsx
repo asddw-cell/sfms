@@ -59,6 +59,15 @@ function isLockedMonth(ym, horizonMonthsBack = 0) {
   return ym < earliestYM
 }
 
+function isSupplyLockedMonth(ym, horizonMonths) {
+  // A Supply cell is locked if it falls within current month + horizonMonths
+  if (horizonMonths === null || horizonMonths === undefined) return false
+  const today    = new Date()
+  const boundary = new Date(today.getFullYear(), today.getMonth() + horizonMonths, 1)
+  const boundaryYM = `${boundary.getFullYear()}-${String(boundary.getMonth() + 1).padStart(2, '0')}`
+  return ym < boundaryYM
+}
+
 function todayYM() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -201,6 +210,7 @@ export default function ForecastGrid() {
   // { current, total, currentItem, updated, created, skipped }
   const [saving,       setSaving]       = useState(false)
   const [gridError,    setGridError]    = useState('')
+  const [supplyHorizon, setSupplyHorizon] = useState(null) // resolved horizon months for current BU+channel
   const [contextMenu,  setContextMenu]  = useState(null) // { x, y, row }
   const [bulkPrice,    setBulkPrice]    = useState(null) // { row, fromYM, toYM, price, priceTypeCode, saving, error }
   const fileInputRef = useRef()
@@ -293,6 +303,27 @@ export default function ForecastGrid() {
     }),
     enabled: canLoad,
   })
+
+  // Resolve supply horizon for current BU+channel — used to lock Supply cells
+  useEffect(() => {
+    if (!buCode || !channelCode || !ftCode) {
+      setSupplyHorizon(null)
+      return
+    }
+    const selectedFt = fts.find(f => String(f.Code) === String(ftCode))
+    if (!selectedFt?.Name?.toLowerCase().includes('supply')) {
+      setSupplyHorizon(null)
+      return
+    }
+    import('../../api/sfms').then(({ fetchSupplyHorizons }) => {
+      fetchSupplyHorizons().then(horizons => {
+        const rule = horizons.find(
+          h => h.BusinessUnitCode === buCode && h.SalesChannelCode === channelCode && h.IsActive
+        )
+        setSupplyHorizon(rule?.HorizonMonths ?? 3)
+      }).catch(() => setSupplyHorizon(3))
+    })
+  }, [buCode, channelCode, ftCode, fts])
 
   // ── Build month columns ────────────────────────────────────────────────────
   const months = useMemo(() => monthsBetween(dateFrom, dateTo), [dateFrom, dateTo])
@@ -660,7 +691,15 @@ map.get(itemNo).months[mk] = {
       maxWidth: 130,
       type: 'numericColumn',
       // Only F rows in unlocked months are editable
-      editable: params => params.data?.rowType === 'F' && !isLockedMonth(ym, horizonMonthsBack) && params.data?.rowType !== 'LY',
+      editable: params => {
+        if (!params.data || params.data.rowType !== 'F') return false
+        const selectedFt = fts.find(f => String(f.Code) === String(ftCode))
+        const isSupply   = selectedFt?.Name?.toLowerCase().includes('supply')
+        if (isSupply) {
+          return !isSupplyLockedMonth(ym, supplyHorizon)
+        }
+        return !isLockedMonth(ym, horizonMonthsBack)
+      },
       valueParser: params => {
         if (params.newValue === '' || params.newValue == null) return null
         const n = Number(params.newValue)
@@ -674,7 +713,12 @@ map.get(itemNo).months[mk] = {
       cellStyle: params => {
         if (params.data?.rowType === 'A')  return { background: 'var(--c-row-a-bg)', padding: 0 }
         if (params.data?.rowType === 'LY') return { background: 'var(--c-row-ly-bg)', padding: 0 }
-        if (isLockedMonth(ym, horizonMonthsBack)) return { background: 'var(--c-locked)', padding: 0 }
+        const selectedFt = fts.find(f => String(f.Code) === String(ftCode))
+        const isSupply   = selectedFt?.Name?.toLowerCase().includes('supply')
+        const locked     = isSupply
+          ? isSupplyLockedMonth(ym, supplyHorizon)
+          : isLockedMonth(ym, horizonMonthsBack)
+        if (locked) return { background: 'var(--c-locked)', padding: 0 }
         if (params.value != null && params.value !== 0) return { background: 'var(--c-cell-edited-bg)', fontWeight: 600, padding: 0 }
         return { padding: 0 }
       },
@@ -740,7 +784,7 @@ map.get(itemNo).months[mk] = {
       },
     }
     return [...fixed, ...monthCols, totalCol, valueCol]
-  }, [months, currencySymbol, horizonMonthsBack])
+  }, [months, currencySymbol, horizonMonthsBack, supplyHorizon, ftCode, fts])
 
   // Re-fit columns when the month set changes (date range picker)
   useEffect(() => {
@@ -812,7 +856,12 @@ map.get(itemNo).months[mk] = {
     const match = colId.match(/^months\.(\d{4}-\d{2})\.quantity$/)
     if (!match) return
     const ym = match[1]
-    if (isLockedMonth(ym, horizonMonthsBack)) return
+    const selectedFt  = fts.find(f => String(f.Code) === String(ftCode))
+    const isSupply    = selectedFt?.Name?.toLowerCase().includes('supply')
+    const cellLocked  = isSupply
+      ? isSupplyLockedMonth(ym, supplyHorizon)
+      : isLockedMonth(ym, horizonMonthsBack)
+    if (cellLocked) return
     if (params.data?.rowType === 'A')  return  // actuals are read-only
     if (params.data?.rowType === 'LE') return  // LE rows are read-only
     if (params.data?.rowType === 'LY') return  // LY rows are read-only
@@ -838,7 +887,7 @@ map.get(itemNo).months[mk] = {
       price:          cell?.price        ?? null,
       notes:          cell?.notes        ?? '',
     })
-  }, [customers, customerCode, selectedBU, channelCode, horizonMonthsBack])
+  }, [customers, customerCode, selectedBU, channelCode, horizonMonthsBack, supplyHorizon, ftCode, fts])
 
   // ── Tab navigation — skip locked and non-month columns ────────────────────
   const tabToNextCell = useCallback((params) => {

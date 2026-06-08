@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.auth.dev_auth import get_current_user
-from app.models import User, Role, UserBusinessUnit, UserCustomer, Customer
+from app.models import User, Role, UserBusinessUnit, UserCustomer, Customer, SupplyHorizon
 from app.schemas import (
     UserOut, UserAdminOut, UserCreateRequest, UserUpdateRequest,
     BUAssignRequest, CustomerAssignRequest, BUAssignmentOut,
-    CustomerAssignmentOut,
+    CustomerAssignmentOut, SupplyHorizonOut, SupplyHorizonCreate, SupplyHorizonUpdate,
 )
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -324,3 +324,101 @@ def set_customer_assignments(
 
     user = db.query(User).filter(User.UserID == user_id).first()
     return _build_user_admin_out(user, db)
+
+
+# ── Supply Horizon configuration ───────────────────────────────────────────────
+
+@router.get("/supply-horizon", response_model=list[SupplyHorizonOut])
+def list_supply_horizons(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List all supply horizon rules. Admin only."""
+    _require_admin(current_user)
+    return db.query(SupplyHorizon).order_by(
+        SupplyHorizon.BusinessUnitCode,
+        SupplyHorizon.SalesChannelCode,
+    ).all()
+
+
+@router.post("/supply-horizon", response_model=SupplyHorizonOut, status_code=201)
+def create_supply_horizon(
+    payload: SupplyHorizonCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a new supply horizon rule for a BU+channel combination. Admin only."""
+    _require_admin(current_user)
+
+    existing = db.query(SupplyHorizon).filter(
+        SupplyHorizon.BusinessUnitCode == payload.BusinessUnitCode,
+        SupplyHorizon.SalesChannelCode == payload.SalesChannelCode,
+        SupplyHorizon.IsActive == True,
+    ).first()
+    if existing:
+        raise HTTPException(
+            400,
+            f"An active horizon rule already exists for "
+            f"{payload.BusinessUnitCode} / {payload.SalesChannelCode}. "
+            f"Update or deactivate it first.",
+        )
+
+    now = datetime.datetime.utcnow()
+    rule = SupplyHorizon(
+        BusinessUnitCode = payload.BusinessUnitCode,
+        SalesChannelCode = payload.SalesChannelCode,
+        HorizonMonths    = payload.HorizonMonths,
+        IsActive         = True,
+        CreatedBy        = current_user.UserID,
+        CreatedDate      = now,
+        ModifiedDate     = now,
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.put("/supply-horizon/{horizon_id}", response_model=SupplyHorizonOut)
+def update_supply_horizon(
+    horizon_id: int,
+    payload: SupplyHorizonUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update an existing supply horizon rule. Admin only."""
+    _require_admin(current_user)
+
+    rule = db.query(SupplyHorizon).filter(SupplyHorizon.HorizonID == horizon_id).first()
+    if not rule:
+        raise HTTPException(404, "Supply horizon rule not found.")
+
+    if payload.HorizonMonths is not None:
+        rule.HorizonMonths = payload.HorizonMonths
+    if payload.IsActive is not None:
+        rule.IsActive = payload.IsActive
+
+    rule.ModifiedDate = datetime.datetime.utcnow()
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.delete("/supply-horizon/{horizon_id}", response_model=SupplyHorizonOut)
+def deactivate_supply_horizon(
+    horizon_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Soft-delete (deactivate) a supply horizon rule. Admin only."""
+    _require_admin(current_user)
+
+    rule = db.query(SupplyHorizon).filter(SupplyHorizon.HorizonID == horizon_id).first()
+    if not rule:
+        raise HTTPException(404, "Supply horizon rule not found.")
+
+    rule.IsActive     = False
+    rule.ModifiedDate = datetime.datetime.utcnow()
+    db.commit()
+    db.refresh(rule)
+    return rule

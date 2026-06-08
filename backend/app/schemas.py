@@ -75,6 +75,7 @@ class RoleOut(ORMBase):
     CanManageUsers: bool
     CanManageRefData: bool
     CanLoadActuals: bool
+    CanEditSupplyForecast: bool
 
 class CustomerAssignmentOut(ORMBase):
     CustomerCode: str
@@ -208,6 +209,24 @@ class ComparisonRow(BaseModel):
     ActualsType:      Optional[str]
     QtyVariance:      Optional[Decimal]
     QtyVariancePct:   Optional[Decimal]
+
+
+# ── Supply Horizon ─────────────────────────────────────────────────────────────
+class SupplyHorizonOut(ORMBase):
+    HorizonID:        int
+    BusinessUnitCode: str
+    SalesChannelCode: str
+    HorizonMonths:    int
+    IsActive:         bool
+
+class SupplyHorizonCreate(BaseModel):
+    BusinessUnitCode: str
+    SalesChannelCode: str
+    HorizonMonths:    int
+
+class SupplyHorizonUpdate(BaseModel):
+    HorizonMonths: Optional[int] = None
+    IsActive:      Optional[bool] = None
 
 
 # ── Last Year Actuals ──────────────────────────────────────────────────────────

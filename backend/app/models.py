@@ -97,7 +97,8 @@ class Role(Base):
     CanViewAllBU      = Column(Boolean,    nullable=False, default=False)
     CanManageUsers    = Column(Boolean,    nullable=False, default=False)
     CanManageRefData  = Column(Boolean,    nullable=False, default=False)
-    CanLoadActuals    = Column(Boolean,    nullable=False, default=False)
+    CanLoadActuals          = Column(Boolean,    nullable=False, default=False)
+    CanEditSupplyForecast   = Column(Boolean,    nullable=False, default=False)
 
     users = relationship("User", back_populates="role")
 
@@ -187,6 +188,22 @@ class ForecastData(Base):
     price_type       = relationship("PriceType")
     created_by_user  = relationship("User", foreign_keys=[CreatedBy])
     modified_by_user = relationship("User", foreign_keys=[ModifiedBy])
+
+
+class SupplyHorizon(Base):
+    __tablename__ = "tblSupplyHorizon"
+    HorizonID        = Column(Integer,    primary_key=True, autoincrement=True)
+    BusinessUnitCode = Column(String(10), ForeignKey("tblBusinessUnit.Code"), nullable=False)
+    SalesChannelCode = Column(String(15), ForeignKey("tblSalesChannel.Code"), nullable=False)
+    HorizonMonths    = Column(Integer,    nullable=False, default=3)
+    IsActive         = Column(Boolean,    nullable=False, default=True)
+    CreatedBy        = Column(Integer,    ForeignKey("tblUser.UserID"),        nullable=False)
+    CreatedDate      = Column(DateTime,   nullable=False)
+    ModifiedDate     = Column(DateTime,   nullable=False)
+
+    business_unit = relationship("BusinessUnit")
+    sales_channel = relationship("SalesChannel")
+    created_by    = relationship("User", foreign_keys=[CreatedBy])
 
 
 class Actuals(Base):

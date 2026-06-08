@@ -10,8 +10,25 @@ from app.models import ForecastData, Item, User, UserBusinessUnit
 from app.schemas import ForecastRowOut, ForecastRowCreate, ForecastRowUpdate
 from app.auth.dev_auth import get_current_user
 from app.services.editability import check_editable
+from app.services.supply_sync import sync_supply_row, delete_supply_row, _get_supply_type_code
 
 router = APIRouter(prefix="/api/v1/forecast", tags=["Forecast"])
+
+_SALES_TYPE_CODE_CACHE: int | None = None
+
+
+def _get_sales_type_code(db) -> int:
+    global _SALES_TYPE_CODE_CACHE
+    if _SALES_TYPE_CODE_CACHE is not None:
+        return _SALES_TYPE_CODE_CACHE
+    from app.models import ForecastType
+    ft = db.query(ForecastType).filter(
+        ForecastType.Name == "Sales",
+        ForecastType.IsActive == True,
+    ).first()
+    if ft:
+        _SALES_TYPE_CODE_CACHE = ft.Code
+    return _SALES_TYPE_CODE_CACHE
 
 
 @router.get("/{bu_code}", response_model=list[ForecastRowOut])
@@ -83,7 +100,7 @@ def create_forecast_row(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    check_editable(bu_code, body.ForecastDate, current_user, db)
+    check_editable(bu_code, body.ForecastDate, body.ForecastTypeCode, current_user, db)
 
     existing = db.query(ForecastData).filter(
         ForecastData.BusinessUnitCode == bu_code,
@@ -114,6 +131,15 @@ def create_forecast_row(
         ModifiedDate     = datetime.utcnow(),
     )
     db.add(row)
+
+    # Sync Supply row if this is a Sales forecast row
+    try:
+        sales_type_code = _get_sales_type_code(db)
+        if sales_type_code and row.ForecastTypeCode == sales_type_code:
+            sync_supply_row(row, db)
+    except Exception:
+        pass  # Supply type not yet configured — skip sync gracefully
+
     db.commit()
     db.refresh(row)
 
@@ -144,7 +170,7 @@ def update_forecast_row(
     if not row:
         raise HTTPException(404, detail="Forecast row not found.")
 
-    check_editable(bu_code, row.ForecastDate, current_user, db)
+    check_editable(bu_code, row.ForecastDate, row.ForecastTypeCode, current_user, db)
 
     row.Quantity     = body.Quantity
     if body.Price is not None:
@@ -155,6 +181,14 @@ def update_forecast_row(
         row.Notes    = body.Notes
     row.ModifiedBy   = current_user.UserID
     row.ModifiedDate = datetime.utcnow()
+
+    # Sync Supply row if this is a Sales forecast row
+    try:
+        sales_type_code = _get_sales_type_code(db)
+        if sales_type_code and row.ForecastTypeCode == sales_type_code:
+            sync_supply_row(row, db)
+    except Exception:
+        pass
 
     db.commit()
     db.refresh(row)
@@ -185,7 +219,25 @@ def delete_forecast_row(
     if not row:
         raise HTTPException(404, detail="Forecast row not found.")
 
-    check_editable(bu_code, row.ForecastDate, current_user, db)
+    check_editable(bu_code, row.ForecastDate, row.ForecastTypeCode, current_user, db)
+
+    # Delete the matching Supply row if this is a Sales forecast row and
+    # the period is outside the horizon (price-change flow)
+    try:
+        sales_type_code = _get_sales_type_code(db)
+        if sales_type_code and row.ForecastTypeCode == sales_type_code:
+            delete_supply_row(
+                bu_code=bu_code,
+                channel_code=row.SalesChannelCode,
+                customer_code=row.CustomerCode,
+                item_no=row.ItemNo,
+                forecast_date=row.ForecastDate,
+                price_type_code=row.PriceTypeCode,
+                old_price=float(row.Price),
+                db=db,
+            )
+    except Exception:
+        pass
 
     db.delete(row)
     db.commit()

@@ -65,21 +65,32 @@ def _get_bu_assignment(user_id: int, bu_code: str, db: Session):
         return None
 
 
-def check_editable(bu_code: str, forecast_date: date, user: User, db: Session) -> None:
+def check_editable(
+    bu_code: str,
+    forecast_date: date,
+    forecast_type_code: int,
+    user: User,
+    db: Session,
+) -> None:
     """
     Raises HTTP 403 if the forecast row is not editable.
 
-    Editable window = current month  →  current month + HorizonMonthsForward
-
-      1. Past month lock — always locked regardless of horizon
+    Decision sequence:
+      1. Past month lock — always locked regardless of role
       2. Invoiced actuals lock
       3. BU assignment check
-      4. Forward horizon check — locks periods beyond current month + N
+      4. Supply forecast — Sales Users blocked entirely
+      5. Supply forecast — authorised roles (Manager/PowerUser/Admin) may edit
+         within the horizon window; this step is a pass, not a block
+      6. Sales/GM forward horizon check
+      7. (Cycle open check is enforced at the router level where cycle data is available)
     """
+    from app.services.supply_sync import resolve_horizon, _is_outside_horizon, _get_supply_type_code
+
     current_month_start  = _first_day_of_current_month()
     forecast_month_start = forecast_date.replace(day=1)
 
-    # 1 — Past month lock (absolute — no horizon can override this)
+    # 1 — Past month lock
     if forecast_month_start < current_month_start:
         raise HTTPException(403, detail="Period is before the current month and cannot be edited.")
 
@@ -92,20 +103,36 @@ def check_editable(bu_code: str, forecast_date: date, user: User, db: Session) -
     if not assignment and not user.role.CanViewAllBU:
         raise HTTPException(403, detail="You are not assigned to this business unit.")
 
-    # 4 — Minimum future distance check
-    # HorizonMonthsBack = minimum number of months ahead of today a user can edit.
-    # e.g. horizon=2 → earliest editable = current month + 2 (May if today is March)
-    # e.g. horizon=0 → current month and beyond (original behaviour)
-    horizon = (
-        assignment.HorizonOverrideMonthsBack
-        if assignment and assignment.HorizonOverrideMonthsBack is not None
-        else user.role.HorizonMonthsBack
-    )
+    # 4 — Supply forecast: block Sales Users entirely
+    try:
+        supply_type_code = _get_supply_type_code(db)
+    except RuntimeError:
+        supply_type_code = None  # Supply type not configured — skip supply checks
 
-    earliest_editable = current_month_start + relativedelta(months=horizon)
-    if forecast_month_start < earliest_editable:
-        raise HTTPException(
-            403,
-            detail=f"Period is within your editing horizon lock "
-                   f"(earliest editable month is {earliest_editable.strftime('%B %Y')})."
+    if supply_type_code and forecast_type_code == supply_type_code:
+        if not getattr(user.role, 'CanEditSupplyForecast', False):
+            raise HTTPException(
+                403,
+                detail="Your role does not have permission to edit Supply forecast rows.",
+            )
+        # 5 — Supply forecast: authorised roles may edit within horizon window
+        # (no block here — horizon is informational for authorised roles)
+        # The frontend renders horizon-locked cells as read-only for UX, but
+        # the API allows authorised roles to write them.
+
+    # 6 — Sales/GM forward horizon check (does not apply to Supply rows)
+    if supply_type_code is None or forecast_type_code != supply_type_code:
+        horizon = (
+            assignment.HorizonOverrideMonthsBack
+            if assignment and assignment.HorizonOverrideMonthsBack is not None
+            else user.role.HorizonMonthsBack
         )
+        earliest_editable = current_month_start + relativedelta(months=horizon)
+        if forecast_month_start < earliest_editable:
+            raise HTTPException(
+                403,
+                detail=(
+                    f"Period is within your editing horizon lock "
+                    f"(earliest editable month is {earliest_editable.strftime('%B %Y')})."
+                ),
+            )

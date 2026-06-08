@@ -4,6 +4,7 @@ import { fetchMe } from './api/sfms'
 import ForecastGrid from './pages/ForecastGrid/ForecastGrid'
 import Changes from './pages/Changes/Changes'
 import UserAdmin from './pages/Admin/UserAdmin'
+import SupplyHorizonAdmin from './pages/Admin/SupplyHorizonAdmin'
 import './index.css'
 import DevUserSwitcher from './components/DevUserSwitcher'
 import { ThemeProvider, useTheme } from './ThemeContext'
@@ -43,6 +44,9 @@ function Nav() {
       {me?.role?.CanManageUsers && (
         <NavLink to="/admin/users">User Admin</NavLink>
       )}
+      {me?.role?.CanManageUsers && (
+        <NavLink to="/admin/supply-horizon">Supply Horizons</NavLink>
+      )}
       <span className="nav-spacer" />
       {me && (
         <span className="nav-user">
@@ -74,6 +78,7 @@ function App() {
                 <Route path="/forecast" element={<ForecastGrid />} />
                 <Route path="/changes" element={<Changes />} />
                 <Route path="/admin/users" element={<UserAdmin />} />
+                <Route path="/admin/supply-horizon" element={<SupplyHorizonAdmin />} />
               </Routes>
             </main>
           </div>
