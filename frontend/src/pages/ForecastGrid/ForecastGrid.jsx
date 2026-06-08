@@ -755,7 +755,10 @@ map.get(itemNo).months[mk] = {
         if (rt === 'A' || rt === 'LE' || rt === 'LY') return false
         if (rt === 'S') {
           if (!me?.role?.CanEditSupplyForecast) return false
-          return !isSupplyLockedMonth(ym, supplyHorizon)
+          // Authorised roles (Manager/PowerUser/Admin) can edit within the
+          // horizon window — the lock only applies to Sales Users, who are
+          // already blocked above by the CanEditSupplyForecast check.
+          return true
         }
         // F row
         return !isLockedMonth(ym, horizonMonthsBack)
@@ -776,8 +779,10 @@ map.get(itemNo).months[mk] = {
         if (rt === 'LE') return { background: 'var(--c-row-le-bg)', padding: 0 }
         if (rt === 'LY') return { background: 'var(--c-row-ly-bg)', padding: 0 }
         if (rt === 'S') {
-          const locked = isSupplyLockedMonth(ym, supplyHorizon)
-          if (locked) return { background: 'var(--c-locked)', padding: 0 }
+          // Only grey out horizon-locked cells for users without supply edit
+          // permission. Authorised roles see all S cells as editable.
+          const supplyLocked = !me?.role?.CanEditSupplyForecast && isSupplyLockedMonth(ym, supplyHorizon)
+          if (supplyLocked) return { background: 'var(--c-locked)', padding: 0 }
           if (params.value != null && params.value !== 0) return { background: 'var(--c-row-s-bg)', fontWeight: 600, padding: 0 }
           return { background: 'var(--c-row-s-bg)', padding: 0 }
         }
@@ -935,7 +940,7 @@ map.get(itemNo).months[mk] = {
     if (rt === 'A' || rt === 'LE' || rt === 'LY') return  // read-only row types
     if (isSupplyRow && !me?.role?.CanEditSupplyForecast) return
     const cellLocked = isSupplyRow
-      ? isSupplyLockedMonth(ym, supplyHorizon)
+      ? (!me?.role?.CanEditSupplyForecast && isSupplyLockedMonth(ym, supplyHorizon))
       : isLockedMonth(ym, horizonMonthsBack)
     if (cellLocked) return
 
