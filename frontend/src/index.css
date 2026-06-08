@@ -22,6 +22,9 @@
   --c-row-a-border:       #d5e8d4;
   --c-row-ly-bg:          #e8f4f8;
   --c-row-le-bg:          #fdf5ff;
+  --c-row-s-bg:           #fef9f0;
+  --c-row-s-border:       #f5e6c8;
+  --c-s-color:            #b7770d;
   --c-row-pinned-bg:      #eaf0fb;
   --c-row-pinned-border:  #2e86c1;
   --c-cell-edited-bg:     #eaf4fb;
@@ -53,6 +56,9 @@
   --c-row-a-border:       #2a4a30;
   --c-row-ly-bg:          #18252e;
   --c-row-le-bg:          #221a28;
+  --c-row-s-bg:           #252010;
+  --c-row-s-border:       #403010;
+  --c-s-color:            #d4a840;
   --c-row-pinned-bg:      #1a2038;
   --c-row-pinned-border:  #5ba8d4;
   --c-cell-edited-bg:     #18262e;

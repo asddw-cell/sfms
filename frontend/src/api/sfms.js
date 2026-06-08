@@ -31,6 +31,9 @@ export const fetchMe = () => client.get('/me').then(r => r.data)
 export const fetchForecast = (buCode, params) =>
   client.get(`/forecast/${buCode}`, { params }).then(r => r.data)
 
+export const fetchSupplyForecast = (buCode, params) =>
+  client.get(`/forecast/${buCode}`, { params }).then(r => r.data)
+
 export const createForecastRow = (buCode, body) =>
   client.post(`/forecast/${buCode}`, body).then(r => r.data)
 

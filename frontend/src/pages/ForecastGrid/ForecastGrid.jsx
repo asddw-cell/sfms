@@ -17,7 +17,7 @@ import 'ag-grid-community/styles/ag-theme-alpine.css'
 import {
   fetchBusinessUnits, fetchForecastTypes, fetchSalesChannels,
   fetchCustomers, fetchBrands, fetchPriceTypes, fetchCurrencies, fetchItems, fetchMe,
-  fetchForecast, createForecastRow, updateForecastRow, deleteForecastRow, copyForecastToGM,
+  fetchForecast, fetchSupplyForecast, createForecastRow, updateForecastRow, deleteForecastRow, copyForecastToGM,
   fetchComparison, fetchLYActuals,
 } from '../../api/sfms'
 import EditModal from '../../components/EditModal'
@@ -88,6 +88,7 @@ function ForecastCellRenderer(params) {
   const isA    = params.data?.rowType === 'A'
   const isLE   = params.data?.rowType === 'LE'
   const isLY   = params.data?.rowType === 'LY'
+  const isS    = params.data?.rowType === 'S'
   const field  = params.colDef?.field
   const itemNo = params.data?.itemNo
 
@@ -102,6 +103,8 @@ function ForecastCellRenderer(params) {
     color = 'var(--c-le-color)'
   } else if (isLY) {
     color = 'var(--c-ly-color)'
+  } else if (isS) {
+    color = 'var(--c-s-color)'
   } else if (isA) {
     const rowData = params.context?.rowData ?? []
     const fRow    = rowData.find(r => r.itemNo === itemNo && r.rowType === 'F')
@@ -119,8 +122,9 @@ function ForecastCellRenderer(params) {
 
   // Blank when no value
   if (val == null) return ''
-  // F row: blank when zero (no entry)
-  if (!isA && val === 0) return ''
+  // F/S rows: blank when zero (no entry)
+  if (!isA && !isS && val === 0) return ''
+  if (isS && val === 0) return ''
   // A row: blank when zero AND the paired F row also has no entry for this period
   if (isA && val === 0) {
     const rowData2 = params.context?.rowData ?? []
@@ -136,7 +140,7 @@ function ForecastCellRenderer(params) {
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
       height: '100%', width: '100%', padding: '0 8px', boxSizing: 'border-box',
-      fontStyle: (isA || isLE || isLY) ? 'italic' : 'normal',
+      fontStyle: (isA || isLE || isLY || isS) ? 'italic' : 'normal',
       fontSize: 11,
       color,
     }}>
@@ -204,6 +208,7 @@ export default function ForecastGrid() {
   const [showActuals,  setShowActuals]  = useState(false)
   const [showLE,       setShowLE]       = useState(false)
   const [showLY,       setShowLY]       = useState(false)
+  const [showSupply,   setShowSupply]   = useState(false)
   const [importing,    setImporting]    = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importProgress, setImportProgress] = useState(null)
@@ -224,6 +229,8 @@ export default function ForecastGrid() {
     ? bus
     : bus.filter(bu => me?.bu_assignments?.some(a => a.BusinessUnitCode === bu.Code))
   const { data: fts  = [] } = useQuery({ queryKey: ['fts'],  queryFn: fetchForecastTypes })
+  // Supply ForecastTypeCode — resolved from the reference data already loaded
+  const supplyFtCode = fts.find(f => f.Name === 'Supply')?.Code ?? null
   const { data: chns = [] } = useQuery({ queryKey: ['chns'], queryFn: fetchSalesChannels })
 
 
@@ -304,26 +311,36 @@ export default function ForecastGrid() {
     enabled: canLoad,
   })
 
-  // Resolve supply horizon for current BU+channel — used to lock Supply cells
+  // ── Supply forecast query — parallel to main forecast query ──────────────
+  const { data: supplyRows = [] } = useQuery({
+    queryKey: ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode],
+    queryFn: () => fetchSupplyForecast(buCode, {
+      forecast_type_code: supplyFtCode,
+      sales_channel_code: channelCode,
+      customer_code:      customerCode,
+      date_from:          firstOfMonth(dateFrom),
+      date_to:            firstOfMonth(dateTo),
+    }),
+    enabled: canLoad && !!supplyFtCode && showSupply,
+  })
+
+  // Resolve supply horizon for current BU+channel when Supply toggle is on
   useEffect(() => {
-    if (!buCode || !channelCode || !ftCode) {
-      setSupplyHorizon(null)
-      return
-    }
-    const selectedFt = fts.find(f => String(f.Code) === String(ftCode))
-    if (!selectedFt?.Name?.toLowerCase().includes('supply')) {
+    if (!buCode || !channelCode || !showSupply) {
       setSupplyHorizon(null)
       return
     }
     import('../../api/sfms').then(({ fetchSupplyHorizons }) => {
       fetchSupplyHorizons().then(horizons => {
         const rule = horizons.find(
-          h => h.BusinessUnitCode === buCode && h.SalesChannelCode === channelCode && h.IsActive
+          h => h.BusinessUnitCode === buCode &&
+               h.SalesChannelCode === channelCode &&
+               h.IsActive
         )
         setSupplyHorizon(rule?.HorizonMonths ?? 3)
       }).catch(() => setSupplyHorizon(3))
     })
-  }, [buCode, channelCode, ftCode, fts])
+  }, [buCode, channelCode, showSupply])
 
   // ── Build month columns ────────────────────────────────────────────────────
   const months = useMemo(() => monthsBetween(dateFrom, dateTo), [dateFrom, dateTo])
@@ -411,6 +428,32 @@ map.get(itemNo).months[mk] = {
     }
     return map
   }, [lyActualsRows, channelCode, months])
+
+  // ── Pivot supply forecast rows → one S row per item ───────────────────────
+  const supplyItemMap = useMemo(() => {
+    const map = new Map()
+    for (const sr of supplyRows) {
+      const itemNo = sr.ItemNo
+      if (!map.has(itemNo)) {
+        map.set(itemNo, {
+          itemNo,
+          description: sr.ItemDescription || itemNo,
+          brandName:   sr.BrandName || '',
+          rowType:     'S',
+          months:      {},
+        })
+      }
+      const mk = monthKey(sr.ForecastDate)
+      map.get(itemNo).months[mk] = {
+        entryNo:       sr.EntryNo,
+        priceTypeCode: sr.PriceTypeCode,
+        quantity:      parseFloat(sr.Quantity),
+        price:         parseFloat(sr.Price),
+        notes:         sr.Notes,
+      }
+    }
+    return map
+  }, [supplyRows])
 
   // ── Merge into paired F/A rows, one pair per item ─────────────────────────
   const rowData = useMemo(() => {
@@ -562,9 +605,22 @@ map.get(itemNo).months[mk] = {
           months:  lyMonths,
         })
       }
+
+      // S row — Supply forecast for this item
+      // Only add if Supply toggle is on (empty S row appears as placeholder for authorised users)
+      if (showSupply) {
+        const sRow = supplyItemMap.get(itemNo)
+        rows.push(sRow ?? {
+          itemNo,
+          description,
+          brandName,
+          rowType: 'S',
+          months:  {},
+        })
+      }
     }
     return rows
-  }, [forecastItemMap, actualsItemMap, months, selectedBrands, lyActualsItemMap])
+  }, [forecastItemMap, actualsItemMap, months, selectedBrands, lyActualsItemMap, supplyItemMap, showSupply])
 
   // ── Row totals ─────────────────────────────────────────────────────────────
   const rowDataWithTotals = useMemo(() => {
@@ -572,6 +628,7 @@ map.get(itemNo).months[mk] = {
       if (r.rowType === 'A')  return showActuals
       if (r.rowType === 'LE') return showLE
       if (r.rowType === 'LY') return showLY
+      if (r.rowType === 'S')  return showSupply
       return true  // F rows always visible
     })
     const withTotals = source.map(row => ({
@@ -592,11 +649,11 @@ map.get(itemNo).months[mk] = {
       const next = withTotals[i + 1]
       const isBrandBoundary = !next || next.brandName !== row.brandName
       // Border on the last visible row of each brand group
-      const lastVisibleType = showLY ? 'LY' : showLE ? 'LE' : showActuals ? 'A' : 'F'
+      const lastVisibleType = showSupply ? 'S' : showLY ? 'LY' : showLE ? 'LE' : showActuals ? 'A' : 'F'
       row.isLastInBrand = row.rowType === lastVisibleType && isBrandBoundary
     }
     return withTotals
-  }, [rowData, months, showActuals, showLE, showLY])
+  }, [rowData, months, showActuals, showLE, showLY, showSupply])
 
   // ── Set of item numbers already in the grid (for AddItemsModal exclusion) ──
   const existingItemNos = useMemo(
@@ -677,6 +734,7 @@ map.get(itemNo).months[mk] = {
           color: params.value === 'F'  ? 'var(--c-accent)'
                : params.value === 'LE' ? 'var(--c-le-color)'
                : params.value === 'LY' ? 'var(--c-ly-color)'
+               : params.value === 'S'  ? 'var(--c-s-color)'
                : 'var(--c-success)',
           textAlign: 'center',
           padding: 0,
@@ -692,12 +750,14 @@ map.get(itemNo).months[mk] = {
       type: 'numericColumn',
       // Only F rows in unlocked months are editable
       editable: params => {
-        if (!params.data || params.data.rowType !== 'F') return false
-        const selectedFt = fts.find(f => String(f.Code) === String(ftCode))
-        const isSupply   = selectedFt?.Name?.toLowerCase().includes('supply')
-        if (isSupply) {
+        const rt = params.data?.rowType
+        if (!params.data) return false
+        if (rt === 'A' || rt === 'LE' || rt === 'LY') return false
+        if (rt === 'S') {
+          if (!me?.role?.CanEditSupplyForecast) return false
           return !isSupplyLockedMonth(ym, supplyHorizon)
         }
+        // F row
         return !isLockedMonth(ym, horizonMonthsBack)
       },
       valueParser: params => {
@@ -711,13 +771,18 @@ map.get(itemNo).months[mk] = {
         return true
       },
       cellStyle: params => {
-        if (params.data?.rowType === 'A')  return { background: 'var(--c-row-a-bg)', padding: 0 }
-        if (params.data?.rowType === 'LY') return { background: 'var(--c-row-ly-bg)', padding: 0 }
-        const selectedFt = fts.find(f => String(f.Code) === String(ftCode))
-        const isSupply   = selectedFt?.Name?.toLowerCase().includes('supply')
-        const locked     = isSupply
-          ? isSupplyLockedMonth(ym, supplyHorizon)
-          : isLockedMonth(ym, horizonMonthsBack)
+        const rt = params.data?.rowType
+        if (rt === 'A')  return { background: 'var(--c-row-a-bg)', padding: 0 }
+        if (rt === 'LE') return { background: 'var(--c-row-le-bg)', padding: 0 }
+        if (rt === 'LY') return { background: 'var(--c-row-ly-bg)', padding: 0 }
+        if (rt === 'S') {
+          const locked = isSupplyLockedMonth(ym, supplyHorizon)
+          if (locked) return { background: 'var(--c-locked)', padding: 0 }
+          if (params.value != null && params.value !== 0) return { background: 'var(--c-row-s-bg)', fontWeight: 600, padding: 0 }
+          return { background: 'var(--c-row-s-bg)', padding: 0 }
+        }
+        // F row
+        const locked = isLockedMonth(ym, horizonMonthsBack)
         if (locked) return { background: 'var(--c-locked)', padding: 0 }
         if (params.value != null && params.value !== 0) return { background: 'var(--c-cell-edited-bg)', fontWeight: 600, padding: 0 }
         return { padding: 0 }
@@ -784,7 +849,7 @@ map.get(itemNo).months[mk] = {
       },
     }
     return [...fixed, ...monthCols, totalCol, valueCol]
-  }, [months, currencySymbol, horizonMonthsBack, supplyHorizon, ftCode, fts])
+  }, [months, currencySymbol, horizonMonthsBack, supplyHorizon, ftCode, fts, me])
 
   // Re-fit columns when the month set changes (date range picker)
   useEffect(() => {
@@ -801,20 +866,24 @@ map.get(itemNo).months[mk] = {
     const match = colId.match(/^months\.(\d{4}-\d{2})\.quantity$/)
     if (!match) return
 
-    const ym       = match[1]
+    const ym          = match[1]
     if (params.node?.rowPinned) return           // ignore edits on total row
-    // Actuals rows are never editable
-    if (params.data?.rowType === 'A') return
-    const itemNo   = params.data?.itemNo
-    // Look up the current F row from the ref — params.data may be a stale snapshot
-    const liveRow  = rowDataRef.current.find(r => r.itemNo === itemNo && r.rowType === 'F')
-    const cell     = liveRow?.months?.[ym]
-    const rawValue = params.newValue
-    const quantity = rawValue === '' || rawValue == null ? null : parseFloat(rawValue)
+    const rt          = params.data?.rowType
+    if (rt === 'A' || rt === 'LE' || rt === 'LY') return  // read-only row types
+    const isSupplyRow = rt === 'S'
+    const targetRowType = isSupplyRow ? 'S' : 'F'
+    const itemNo      = params.data?.itemNo
+    // Look up the current row from the ref — params.data may be a stale snapshot
+    const liveRow     = rowDataRef.current.find(r => r.itemNo === itemNo && r.rowType === targetRowType)
+    const cell        = liveRow?.months?.[ym]
+    const rawValue    = params.newValue
+    const quantity    = rawValue === '' || rawValue == null ? null : parseFloat(rawValue)
 
     setGridError('')
 
-    const forecastQKey = ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+    const forecastQKey = isSupplyRow
+      ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
+      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
 
     try {
       if (cell?.entryNo) {
@@ -830,8 +899,9 @@ map.get(itemNo).months[mk] = {
       } else {
         // New row — create with quantity only (price/price type optional)
         if (quantity === null || isNaN(quantity)) return
+        const useFtCode = isSupplyRow ? supplyFtCode : ftCode
         const created = await createForecastRow(buCode, {
-          ForecastTypeCode: Number(ftCode),
+          ForecastTypeCode: Number(useFtCode),
           SalesChannelCode: channelCode,
           CustomerCode:     customerCode,
           ItemNo:           itemNo,
@@ -845,9 +915,13 @@ map.get(itemNo).months[mk] = {
       }
     } catch (e) {
       setGridError(e.message)
-      qc.invalidateQueries({ queryKey: ['forecast'] }) // revert to server state on error
+      if (isSupplyRow) {
+        qc.invalidateQueries({ queryKey: ['supply-forecast'] })
+      } else {
+        qc.invalidateQueries({ queryKey: ['forecast'] })
+      }
     }
-  }, [buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands, pts, qc])
+  }, [buCode, ftCode, supplyFtCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands, pts, qc])
 
   // ── Double click → open modal for price / notes ───────────────────────────
   const onCellDoubleClicked = useCallback((params) => {
@@ -856,15 +930,14 @@ map.get(itemNo).months[mk] = {
     const match = colId.match(/^months\.(\d{4}-\d{2})\.quantity$/)
     if (!match) return
     const ym = match[1]
-    const selectedFt  = fts.find(f => String(f.Code) === String(ftCode))
-    const isSupply    = selectedFt?.Name?.toLowerCase().includes('supply')
-    const cellLocked  = isSupply
+    const rt           = params.data?.rowType
+    const isSupplyRow  = rt === 'S'
+    if (rt === 'A' || rt === 'LE' || rt === 'LY') return  // read-only row types
+    if (isSupplyRow && !me?.role?.CanEditSupplyForecast) return
+    const cellLocked = isSupplyRow
       ? isSupplyLockedMonth(ym, supplyHorizon)
       : isLockedMonth(ym, horizonMonthsBack)
     if (cellLocked) return
-    if (params.data?.rowType === 'A')  return  // actuals are read-only
-    if (params.data?.rowType === 'LE') return  // LE rows are read-only
-    if (params.data?.rowType === 'LY') return  // LY rows are read-only
 
     // Stop any active inline edit before opening modal
     gridRef.current?.api?.stopEditing(true)
@@ -886,8 +959,9 @@ map.get(itemNo).months[mk] = {
       quantity:       cell?.quantity     ?? null,
       price:          cell?.price        ?? null,
       notes:          cell?.notes        ?? '',
+      isSupplyRow,
     })
-  }, [customers, customerCode, selectedBU, channelCode, horizonMonthsBack, supplyHorizon, ftCode, fts])
+  }, [customers, customerCode, channelCode, horizonMonthsBack, supplyHorizon, me])
 
   // ── Tab navigation — skip locked and non-month columns ────────────────────
   const tabToNextCell = useCallback((params) => {
@@ -1193,7 +1267,11 @@ map.get(itemNo).months[mk] = {
   async function handleModalSave({ quantity, price, notes, priceTypeCode: modalPriceType }) {
     setSaving(true)
     setGridError('')
-    const forecastQKey = ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+    const isSupplyRow  = modalCell?.isSupplyRow
+    const forecastQKey = isSupplyRow
+      ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
+      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+    const useFtCode    = isSupplyRow ? supplyFtCode : ftCode
     try {
       if (modalCell.entryNo) {
         // Simple update — price and price type are no longer part of the unique key
@@ -1206,7 +1284,7 @@ map.get(itemNo).months[mk] = {
         qc.setQueryData(forecastQKey, old => (old ?? []).map(r => r.EntryNo === modalCell.entryNo ? updated : r))
       } else {
         const created = await createForecastRow(buCode, {
-          ForecastTypeCode: Number(ftCode),
+          ForecastTypeCode: Number(useFtCode),
           SalesChannelCode: channelCode,
           CustomerCode:     customerCode,
           ItemNo:           modalCell.itemNo,
@@ -1231,7 +1309,10 @@ map.get(itemNo).months[mk] = {
     if (!window.confirm('Delete this forecast row?')) return
     setSaving(true)
     setGridError('')
-    const forecastQKey = ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+    const isSupplyRow  = modalCell?.isSupplyRow
+    const forecastQKey = isSupplyRow
+      ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
+      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
     try {
       await deleteForecastRow(buCode, entryNo)
       qc.setQueryData(forecastQKey, old => (old ?? []).filter(r => r.EntryNo !== entryNo))
@@ -1343,6 +1424,20 @@ map.get(itemNo).months[mk] = {
             >
               {showLY ? '✓ LY' : 'LY'}
             </button>
+
+            {!!supplyFtCode && (
+              <button
+                className="btn btn-ghost"
+                onClick={() => setShowSupply(v => !v)}
+                style={{
+                  borderColor: showSupply ? 'var(--c-s-color)' : 'var(--c-border)',
+                  color:       showSupply ? 'var(--c-s-color)' : 'var(--c-muted)',
+                  fontWeight:  showSupply ? 700 : 400,
+                }}
+              >
+                {showSupply ? '✓ Supply' : 'Supply'}
+              </button>
+            )}
 
             {(me?.role?.CanManageRefData || me?.role?.CanManageUsers) &&
               !fts.find(f => String(f.Code) === ftCode)?.Name?.toLowerCase().includes('gm') && (
@@ -1471,12 +1566,16 @@ map.get(itemNo).months[mk] = {
                 getRowStyle={params => {
                   if (params.node.rowPinned) return { background: 'var(--c-row-pinned-bg)', fontWeight: 700, borderBottom: '2px solid var(--c-row-pinned-border)' }
                   if (params.data?.isLastInBrand) {
-                    const isF = params.data?.rowType === 'F'
-                    return { background: isF ? 'transparent' : 'var(--c-row-a-bg)', borderBottom: '3px solid var(--c-row-pinned-border)' }
+                    const rt = params.data?.rowType
+                    const bg = rt === 'A'  ? 'var(--c-row-a-bg)'
+                             : rt === 'S'  ? 'var(--c-row-s-bg)'
+                             : 'transparent'
+                    return { background: bg, borderBottom: '3px solid var(--c-row-pinned-border)' }
                   }
                   if (params.data?.rowType === 'A')  return { background: 'var(--c-row-a-bg)', borderBottom: '1px solid var(--c-row-a-border)' }
                   if (params.data?.rowType === 'LE') return { background: 'var(--c-row-le-bg)', borderBottom: '1px solid var(--c-border)' }
                   if (params.data?.rowType === 'LY') return { background: 'var(--c-row-ly-bg)', borderBottom: '1px solid var(--c-border)' }
+                  if (params.data?.rowType === 'S')  return { background: 'var(--c-row-s-bg)', borderBottom: '1px solid var(--c-row-s-border)' }
                 }}
               />
             )}
