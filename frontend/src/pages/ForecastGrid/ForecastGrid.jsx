@@ -889,6 +889,7 @@ map.get(itemNo).months[mk] = {
     const forecastQKey = isSupplyRow
       ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
       : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+    const supplyQKey = ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
 
     try {
       if (cell?.entryNo) {
@@ -918,6 +919,54 @@ map.get(itemNo).months[mk] = {
         })
         qc.setQueryData(forecastQKey, old => [...(old ?? []), created])
       }
+
+      // If this was a Sales row edit and supply sync is active, optimistically
+      // update the supply-forecast cache so the S cell reflects the new value
+      // immediately without waiting for a refetch.
+      if (!isSupplyRow && supplyFtCode && quantity !== null) {
+        const horizon  = supplyHorizon ?? 3
+        const today    = new Date()
+        const boundary = new Date(today.getFullYear(), today.getMonth() + horizon, 1)
+        const boundaryYM = `${boundary.getFullYear()}-${String(boundary.getMonth() + 1).padStart(2, '0')}`
+
+        if (ym >= boundaryYM) {
+          // Period is outside the horizon — supply sync will have fired on the
+          // backend. Mirror the update in the supply cache immediately.
+          qc.setQueryData(supplyQKey, (old = []) => {
+            const existingIdx = old.findIndex(
+              r => r.ItemNo              === itemNo &&
+                   r.ForecastDate?.slice(0, 7) === ym &&
+                   r.SalesChannelCode   === channelCode
+            )
+            if (existingIdx !== -1) {
+              const updated = [...old]
+              updated[existingIdx] = { ...updated[existingIdx], Quantity: String(quantity) }
+              return updated
+            } else {
+              // No Supply row exists yet in cache — append a synthetic one
+              // so the S cell shows the value immediately. The real EntryNo
+              // will be populated on the next background refetch.
+              return [...old, {
+                ItemNo:           itemNo,
+                ItemDescription:  params.data.description,
+                BrandName:        params.data.brandName,
+                ForecastDate:     ym + '-01',
+                SalesChannelCode: channelCode,
+                Quantity:         String(quantity),
+                Price:            String(params.data.months?.[ym]?.price ?? 0),
+                PriceTypeCode:    params.data.months?.[ym]?.priceTypeCode ?? null,
+                EntryNo:          null,  // will be resolved on next refetch
+                Notes:            'Auto-synced from Sales forecast',
+              }]
+            }
+          })
+
+          // Background refetch to reconcile EntryNos and confirm sync succeeded
+          setTimeout(() => {
+            qc.invalidateQueries({ queryKey: supplyQKey })
+          }, 2000)
+        }
+      }
     } catch (e) {
       setGridError(e.message)
       if (isSupplyRow) {
@@ -926,7 +975,7 @@ map.get(itemNo).months[mk] = {
         qc.invalidateQueries({ queryKey: ['forecast'] })
       }
     }
-  }, [buCode, ftCode, supplyFtCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands, pts, qc])
+  }, [buCode, ftCode, supplyFtCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands, pts, qc, supplyHorizon])
 
   // ── Double click → open modal for price / notes ───────────────────────────
   const onCellDoubleClicked = useCallback((params) => {
@@ -1276,6 +1325,7 @@ map.get(itemNo).months[mk] = {
     const forecastQKey = isSupplyRow
       ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
       : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+    const supplyQKey   = ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
     const useFtCode    = isSupplyRow ? supplyFtCode : ftCode
     try {
       if (modalCell.entryNo) {
@@ -1301,6 +1351,51 @@ map.get(itemNo).months[mk] = {
         })
         qc.setQueryData(forecastQKey, old => [...(old ?? []), created])
       }
+
+      // Optimistic supply cache update after modal save on F row
+      if (!modalCell.isSupplyRow && supplyFtCode) {
+        const modalYM    = modalCell.ym
+        const horizon    = supplyHorizon ?? 3
+        const today      = new Date()
+        const boundary   = new Date(today.getFullYear(), today.getMonth() + horizon, 1)
+        const boundaryYM = `${boundary.getFullYear()}-${String(boundary.getMonth() + 1).padStart(2, '0')}`
+
+        if (modalYM >= boundaryYM) {
+          qc.setQueryData(supplyQKey, (old = []) => {
+            const existingIdx = old.findIndex(
+              r => r.ItemNo              === modalCell.itemNo &&
+                   r.ForecastDate?.slice(0, 7) === modalYM &&
+                   r.SalesChannelCode   === channelCode
+            )
+            const newQty   = String(quantity)
+            const newPrice = String(price ?? 0)
+            if (existingIdx !== -1) {
+              const updated = [...old]
+              updated[existingIdx] = { ...updated[existingIdx], Quantity: newQty, Price: newPrice }
+              return updated
+            } else {
+              return [...old, {
+                ItemNo:           modalCell.itemNo,
+                ItemDescription:  modalCell.description,
+                BrandName:        modalCell.brandName,
+                ForecastDate:     modalYM + '-01',
+                SalesChannelCode: channelCode,
+                Quantity:         newQty,
+                Price:            newPrice,
+                PriceTypeCode:    modalCell.priceTypeCode ?? null,
+                EntryNo:          null,
+                Notes:            'Auto-synced from Sales forecast',
+              }]
+            }
+          })
+
+          // Background refetch to reconcile EntryNos and confirm sync succeeded
+          setTimeout(() => {
+            qc.invalidateQueries({ queryKey: supplyQKey })
+          }, 2000)
+        }
+      }
+
       setModalCell(null)
     } catch (e) {
       setGridError(e.message)
