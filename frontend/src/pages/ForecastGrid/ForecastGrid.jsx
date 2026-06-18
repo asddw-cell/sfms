@@ -1583,11 +1583,6 @@ map.get(itemNo).months[mk] = {
                 style={{ width: '100%' }}
                 autoComplete="off"
               />
-              {!itemNo && itemSearch.length < 2 && (
-                <div style={{ fontSize: 11, color: 'var(--c-muted)', marginTop: 2 }}>
-                  {buCode ? 'Type to search items' : 'Select a BU first'}
-                </div>
-              )}
               {itemSearchLoading && (
                 <div style={{ fontSize: 11, color: 'var(--c-muted)', marginTop: 2 }}>Searching…</div>
               )}
