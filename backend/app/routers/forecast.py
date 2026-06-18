@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import date, datetime
 from app.db import get_db
-from app.models import ForecastData, Item, User, UserBusinessUnit
-from app.schemas import ForecastRowOut, ForecastRowCreate, ForecastRowUpdate
+from app.models import ForecastData, Item, User, UserBusinessUnit, UserCustomer, Customer, PriceType
+from app.schemas import ForecastRowOut, ForecastRowCreate, ForecastRowUpdate, ForecastRowByItemOut
 from app.auth.dev_auth import get_current_user
 from app.services.editability import check_editable
 from app.services.supply_sync import sync_supply_row, delete_supply_row, _get_supply_type_code
@@ -172,7 +172,7 @@ def update_forecast_row(
 
     check_editable(bu_code, row.ForecastDate, row.ForecastTypeCode, current_user, db)
 
-    row.Quantity     = body.Quantity
+    row.Quantity     = body.Quantity if body.Quantity is not None else 0
     if body.Price is not None:
         row.Price    = body.Price
     if body.PriceTypeCode is not None:
@@ -203,6 +203,105 @@ def update_forecast_row(
     row.BrandName       = brand.Name if brand else ''
 
     return row
+
+
+def _check_editable_safe(bu_code, forecast_date, forecast_type_code, user, db) -> bool:
+    """Wraps check_editable, returning False instead of raising for read-only contexts."""
+    try:
+        check_editable(bu_code, forecast_date, forecast_type_code, user, db)
+        return True
+    except HTTPException:
+        return False
+
+
+@router.get("/{bu_code}/by-item", response_model=list[ForecastRowByItemOut])
+def get_forecast_by_item(
+    bu_code:            str,
+    item_no:            str  = Query(...),
+    sales_channel_code: str  = Query(...),
+    forecast_type_code: int  = Query(...),
+    date_from:          date = Query(...),
+    date_to:            date = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # BU access check
+    assignment = db.query(UserBusinessUnit).filter(
+        UserBusinessUnit.UserID == current_user.UserID,
+        UserBusinessUnit.BusinessUnitCode == bu_code,
+    ).first()
+    if not assignment and not current_user.role.CanViewAllBU:
+        raise HTTPException(403, detail="You are not assigned to this business unit.")
+
+    q = db.query(ForecastData).filter(
+        ForecastData.BusinessUnitCode  == bu_code,
+        ForecastData.ItemNo            == item_no,
+        ForecastData.SalesChannelCode  == sales_channel_code,
+        ForecastData.ForecastTypeCode  == forecast_type_code,
+        ForecastData.ForecastDate      >= date_from,
+        ForecastData.ForecastDate      <= date_to,
+    )
+
+    if not current_user.role.CanViewAllBU:
+        assigned_codes = [
+            uc.CustomerCode
+            for uc in db.query(UserCustomer).filter(
+                UserCustomer.UserID           == current_user.UserID,
+                UserCustomer.BusinessUnitCode == bu_code,
+            ).all()
+        ]
+        q = q.filter(ForecastData.CustomerCode.in_(assigned_codes))
+
+    rows = q.order_by(
+        ForecastData.CustomerCode,
+        ForecastData.PriceTypeCode,
+        ForecastData.ForecastDate,
+    ).all()
+
+    if not rows:
+        return []
+
+    # Bulk-fetch customer names
+    customer_codes = list({r.CustomerCode for r in rows})
+    customers = db.query(Customer).filter(
+        Customer.Code.in_(customer_codes),
+        Customer.BusinessUnitCode == bu_code,
+    ).all()
+    customer_name_map = {c.Code: c.Name for c in customers}
+
+    # Bulk-fetch price type names
+    pt_codes = list({r.PriceTypeCode for r in rows if r.PriceTypeCode is not None})
+    price_types = db.query(PriceType).filter(PriceType.Code.in_(pt_codes)).all() if pt_codes else []
+    pt_name_map = {pt.Code: pt.Name for pt in price_types}
+
+    # Cache editability checks per unique (bu_code, forecast_date, forecast_type_code)
+    editable_cache: dict[tuple, bool] = {}
+
+    def _is_editable(fd: date) -> bool:
+        key = (bu_code, fd, forecast_type_code)
+        if key not in editable_cache:
+            editable_cache[key] = _check_editable_safe(bu_code, fd, forecast_type_code, current_user, db)
+        return editable_cache[key]
+
+    result = []
+    for row in rows:
+        result.append(ForecastRowByItemOut(
+            EntryNo          = row.EntryNo,
+            BusinessUnitCode = row.BusinessUnitCode,
+            ForecastTypeCode = row.ForecastTypeCode,
+            SalesChannelCode = row.SalesChannelCode,
+            CustomerCode     = row.CustomerCode,
+            CustomerName     = customer_name_map.get(row.CustomerCode, row.CustomerCode),
+            ItemNo           = row.ItemNo,
+            ForecastDate     = row.ForecastDate,
+            PriceTypeCode    = row.PriceTypeCode,
+            PriceTypeName    = pt_name_map.get(row.PriceTypeCode) if row.PriceTypeCode is not None else None,
+            Price            = row.Price,
+            Quantity         = row.Quantity,
+            Notes            = row.Notes,
+            IsEditable       = _is_editable(row.ForecastDate),
+        ))
+    return result
 
 
 @router.delete("/{bu_code}/{entry_no}", status_code=204)

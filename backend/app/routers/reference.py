@@ -12,7 +12,7 @@ from app.models import (
 )
 from app.schemas import (
     BusinessUnitOut, ForecastTypeOut, SalesChannelOut, CustomerOut,
-    BrandOut, ItemOut, PriceTypeOut, CurrencyOut, RoleOut
+    BrandOut, ItemOut, ItemSearchOut, PriceTypeOut, CurrencyOut, RoleOut
 )
 from app.auth.dev_auth import get_current_user
 from app.models import User
@@ -118,6 +118,31 @@ def list_items(
         q = q.filter(Item.BrandCode == brand_code)
 
     return q.order_by(Item.Description).all()
+
+
+@router.get("/items/{bu_code}/search", response_model=list[ItemSearchOut])
+def search_items(
+    bu_code: str,
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Typeahead search: requires q >= 2 characters; returns at most 50 results."""
+    if not q or len(q) < 2:
+        return []
+
+    region_col = _region_active_column(bu_code)
+    query = db.query(Item)
+    if region_col is not None:
+        query = query.filter(region_col == True)
+
+    like_pattern = f"%{q}%"
+    query = query.filter(
+        (Item.ItemNo.ilike(like_pattern)) | (Item.Description.ilike(like_pattern))
+    )
+
+    results = query.order_by(Item.ItemNo).limit(50).all()
+    return results
 
 
 @router.get("/price-types", response_model=list[PriceTypeOut])

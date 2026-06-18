@@ -18,7 +18,7 @@ import {
   fetchBusinessUnits, fetchForecastTypes, fetchSalesChannels,
   fetchCustomers, fetchBrands, fetchPriceTypes, fetchCurrencies, fetchItems, fetchMe,
   fetchForecast, fetchSupplyForecast, createForecastRow, updateForecastRow, deleteForecastRow, copyForecastToGM,
-  fetchComparison, fetchLYActuals,
+  fetchComparison, fetchLYActuals, searchItems,
 } from '../../api/sfms'
 import EditModal from '../../components/EditModal'
 import MultiSelect from '../../components/MultiSelect'
@@ -27,6 +27,7 @@ import GmCopyModal          from '../../components/GmCopyModal'
 import ForecastSummaryPanel from '../../components/ForecastSummaryPanel'
 import MonthPicker from '../../components/MonthPicker'
 import { useTheme } from '../../ThemeContext'
+import ItemViewGrid from './ItemViewGrid'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function monthKey(dateStr) { return dateStr ? dateStr.slice(0, 7) : '' }
@@ -171,17 +172,60 @@ export default function ForecastGrid() {
   // Initialise from localStorage, falling back to defaults
   const _f = loadFilters()
 
+  const [viewMode,      setViewMode]      = useState(_f.viewMode      || 'customer')
+
   const [buCode,        setBuCode]        = useState(_f.buCode        || '')
   const [ftCode,        setFtCode]        = useState(_f.ftCode        || '')
   const [channelCode,   setChannelCode]   = useState(_f.channelCode   || '')
   const [customerCode,  setCustomerCode]  = useState(_f.customerCode  || '')
   const [selectedBrands, setSelectedBrands] = useState(_f.selectedBrands || [])
 
+  // ── Item view state ────────────────────────────────────────────────────────
+  // Restore a previously selected item from localStorage (itemNo + display text)
+  const [itemNo,              setItemNo]              = useState(_f.itemNo || '')
+  const [itemSearch,          setItemSearch]          = useState(
+    _f.itemNo && _f.itemDescription ? `${_f.itemNo} — ${_f.itemDescription}` : ''
+  )
+  const [selectedItemDetails, setSelectedItemDetails] = useState(null)
+  const [itemSearchResults,   setItemSearchResults]   = useState([])
+  const [itemSearchOpen,      setItemSearchOpen]      = useState(false)
+  const [itemSearchLoading,   setItemSearchLoading]   = useState(false)
+  const [itemViewError,       setItemViewError]       = useState('')
+
   const [dateFrom,      setDateFrom]      = useState(_f.dateFrom      || todayYM())
   const [dateTo,        setDateTo]        = useState(_f.dateTo        || twelveMonthsAheadYM())
 
   // Persist whenever any filter changes — always read fresh from storage to avoid stale captures
-  const updateBuCode       = v => { setBuCode(v);        saveFilters({ ...loadFilters(), buCode: v, customerCode: '' }) }
+  const updateViewMode = v => {
+    setViewMode(v)
+    if (v === 'item') {
+      setCustomerCode('')
+      saveFilters({ ...loadFilters(), viewMode: v, customerCode: '' })
+    } else {
+      setItemNo('')
+      setItemSearch('')
+      setSelectedItemDetails(null)
+      setItemSearchResults([])
+      setItemSearchOpen(false)
+      saveFilters({ ...loadFilters(), viewMode: v, itemNo: '', itemDescription: '' })
+    }
+  }
+
+  const updateItemNo = (no, details) => {
+    setItemNo(no)
+    setSelectedItemDetails(details)
+    saveFilters({ ...loadFilters(), itemNo: no, itemDescription: details?.Description ?? '' })
+  }
+
+  const updateBuCode = v => {
+    setBuCode(v)
+    setItemNo('')
+    setItemSearch('')
+    setSelectedItemDetails(null)
+    setItemSearchResults([])
+    setItemSearchOpen(false)
+    saveFilters({ ...loadFilters(), buCode: v, customerCode: '', itemNo: '', itemDescription: '' })
+  }
   const updateFtCode       = v => { setFtCode(v);        saveFilters({ ...loadFilters(), ftCode: v }) }
   const updateChannelCode  = v => { setChannelCode(v);   saveFilters({ ...loadFilters(), channelCode: v }) }
   const updateCustomerCode = v => { setCustomerCode(v);  saveFilters({ ...loadFilters(), customerCode: v }) }
@@ -261,7 +305,9 @@ export default function ForecastGrid() {
   const currencySymbol   = channelCode === 'FOB' ? '$' : buCurrencySymbol
 
   // ── Forecast query ─────────────────────────────────────────────────────────
-  const canLoad = !!(buCode && ftCode && channelCode && customerCode)
+  const canLoad = viewMode === 'item'
+    ? !!(buCode && ftCode && channelCode && itemNo)
+    : !!(buCode && ftCode && channelCode && customerCode)
 
   const { data: forecastRows = [], isLoading, error: fetchError } = useQuery({
     queryKey: ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands],
@@ -323,6 +369,32 @@ export default function ForecastGrid() {
     }),
     enabled: canLoad && !!supplyFtCode && showSupply,
   })
+
+  // ── Item typeahead debounced search ─────────────────────────────────────────
+  useEffect(() => {
+    if (!buCode || viewMode !== 'item' || itemNo) {
+      return
+    }
+    if (itemSearch.length < 2) {
+      setItemSearchResults([])
+      setItemSearchOpen(false)
+      return
+    }
+    const timer = setTimeout(async () => {
+      setItemSearchLoading(true)
+      try {
+        const results = await searchItems(buCode, itemSearch)
+        setItemSearchResults(results)
+        setItemSearchOpen(results.length > 0)
+      } catch {
+        setItemSearchResults([])
+        setItemSearchOpen(false)
+      } finally {
+        setItemSearchLoading(false)
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [itemSearch, buCode, viewMode, itemNo])
 
   // Resolve supply horizon for current BU+channel when Supply toggle is on
   useEffect(() => {
@@ -893,15 +965,9 @@ map.get(itemNo).months[mk] = {
 
     try {
       if (cell?.entryNo) {
-        // Existing row — update quantity
-        if (quantity === null) {
-          // Cleared → delete the row
-          await deleteForecastRow(buCode, cell.entryNo)
-          qc.setQueryData(forecastQKey, old => (old ?? []).filter(r => r.EntryNo !== cell.entryNo))
-        } else {
-          const updated = await updateForecastRow(buCode, cell.entryNo, { Quantity: quantity, Notes: cell.notes })
-          qc.setQueryData(forecastQKey, old => (old ?? []).map(r => r.EntryNo === cell.entryNo ? updated : r))
-        }
+        // Existing row — update quantity; null → API stores 0 (blank-cell behaviour)
+        const updated = await updateForecastRow(buCode, cell.entryNo, { Quantity: quantity, Notes: cell.notes })
+        qc.setQueryData(forecastQKey, old => (old ?? []).map(r => r.EntryNo === cell.entryNo ? updated : r))
       } else {
         // New row — create with quantity only (price/price type optional)
         if (quantity === null || isNaN(quantity)) return
@@ -1432,6 +1498,36 @@ map.get(itemNo).months[mk] = {
 
         {/* ── Row 1: Required filters + date range ── */}
         <div className="toolbar" style={{ marginBottom: 8 }}>
+          {/* View by toggle */}
+          <div className="field-group">
+            <label>View by</label>
+            <div style={{ display: 'flex', gap: 0, borderRadius: 'var(--radius)', overflow: 'hidden', border: '1px solid var(--c-border)' }}>
+              <button
+                className="btn btn-ghost"
+                onClick={() => updateViewMode('customer')}
+                style={{
+                  borderRadius: 0, border: 'none', padding: '0 12px', height: 32, fontSize: 12,
+                  background: viewMode === 'customer' ? 'var(--c-accent)' : 'transparent',
+                  color:      viewMode === 'customer' ? '#fff'           : 'var(--c-muted)',
+                  fontWeight: viewMode === 'customer' ? 700              : 400,
+                  cursor: 'pointer',
+                }}
+              >Customer</button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => updateViewMode('item')}
+                style={{
+                  borderRadius: 0, border: 'none', borderLeft: '1px solid var(--c-border)',
+                  padding: '0 12px', height: 32, fontSize: 12,
+                  background: viewMode === 'item' ? 'var(--c-accent)' : 'transparent',
+                  color:      viewMode === 'item' ? '#fff'            : 'var(--c-muted)',
+                  fontWeight: viewMode === 'item' ? 700               : 400,
+                  cursor: 'pointer',
+                }}
+              >Item</button>
+            </div>
+          </div>
+
           <div className="field-group">
             <label>Forecast Type *</label>
             <select value={ftCode} onChange={e => updateFtCode(e.target.value)}>
@@ -1456,13 +1552,77 @@ map.get(itemNo).months[mk] = {
             </select>
           </div>
 
-          <div className="field-group">
-            <label>Customer *</label>
-            <select value={customerCode} onChange={e => updateCustomerCode(e.target.value)} disabled={!buCode}>
-              <option value="">— Select —</option>
-              {customers.map(c => <option key={c.Code} value={c.Code}>{c.Name}</option>)}
-            </select>
-          </div>
+          {/* Customer selector (customer view) or Item typeahead (item view) */}
+          {viewMode === 'customer' ? (
+            <div className="field-group">
+              <label>Customer *</label>
+              <select value={customerCode} onChange={e => updateCustomerCode(e.target.value)} disabled={!buCode}>
+                <option value="">— Select —</option>
+                {customers.map(c => <option key={c.Code} value={c.Code}>{c.Name}</option>)}
+              </select>
+            </div>
+          ) : (
+            <div className="field-group" style={{ position: 'relative', minWidth: 260 }}>
+              <label>Item *</label>
+              <input
+                type="text"
+                placeholder="Search by item no. or description"
+                value={itemSearch}
+                onChange={e => {
+                  const val = e.target.value
+                  setItemSearch(val)
+                  if (itemNo) {
+                    setItemNo('')
+                    setSelectedItemDetails(null)
+                    saveFilters({ ...loadFilters(), itemNo: '', itemDescription: '' })
+                  }
+                }}
+                onBlur={() => setTimeout(() => setItemSearchOpen(false), 150)}
+                onFocus={() => { if (!itemNo && itemSearchResults.length > 0) setItemSearchOpen(true) }}
+                disabled={!buCode}
+                style={{ width: '100%' }}
+                autoComplete="off"
+              />
+              {!itemNo && itemSearch.length < 2 && (
+                <div style={{ fontSize: 11, color: 'var(--c-muted)', marginTop: 2 }}>
+                  {buCode ? 'Type to search items' : 'Select a BU first'}
+                </div>
+              )}
+              {itemSearchLoading && (
+                <div style={{ fontSize: 11, color: 'var(--c-muted)', marginTop: 2 }}>Searching…</div>
+              )}
+              {itemSearchOpen && itemSearchResults.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
+                  background: 'var(--c-surface)', border: '1px solid var(--c-border)',
+                  borderRadius: 'var(--radius)', boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  maxHeight: 240, overflowY: 'auto',
+                }}>
+                  {itemSearchResults.map(item => (
+                    <div
+                      key={item.ItemNo}
+                      style={{ padding: '7px 12px', cursor: 'pointer', fontSize: 12 }}
+                      onMouseDown={e => {
+                        // mouseDown fires before blur, preventing the dropdown from closing
+                        e.preventDefault()
+                        const display = `${item.ItemNo} — ${item.Description}`
+                        setItemSearch(display)
+                        updateItemNo(item.ItemNo, item)
+                        setItemSearchOpen(false)
+                        setItemSearchResults([])
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'var(--c-bg)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <strong style={{ color: 'var(--c-accent)' }}>{item.ItemNo}</strong>
+                      {' — '}
+                      <span>{item.Description}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="field-group">
             <label>From (month)</label>
@@ -1475,8 +1635,8 @@ map.get(itemNo).months[mk] = {
           </div>
         </div>
 
-        {/* ── Row 2: Brand filter + action buttons ── */}
-        <div className="toolbar" style={{ marginBottom: 16 }}>
+        {/* ── Row 2: Brand filter + action buttons (customer view only) ── */}
+        {viewMode === 'customer' && <div className="toolbar" style={{ marginBottom: 16 }}>
           <div className="field-group">
             <label>Brand (optional)</label>
             <MultiSelect
@@ -1585,19 +1745,24 @@ map.get(itemNo).months[mk] = {
               onChange={handleImportFile}
             />
           </div>
-        </div>
+        </div>}
 
-        <p className="text-muted" style={{ fontSize: 12, marginBottom: 10 }}>
-          Click a cell to edit quantity inline. Double-click to set price and notes.
-        </p>
+        {viewMode === 'customer' && (
+          <p className="text-muted" style={{ fontSize: 12, marginBottom: 10 }}>
+            Click a cell to edit quantity inline. Double-click to set price and notes.
+          </p>
+        )}
 
         {!canLoad && (
           <p className="text-muted" style={{ fontSize: 13, marginBottom: 12 }}>
-            Select Responsibility, Forecast Type, Sales Channel and Customer to load the grid.
+            {viewMode === 'item'
+              ? 'Select Responsibility, Forecast Type, Sales Channel and search for an Item to load the grid.'
+              : 'Select Responsibility, Forecast Type, Sales Channel and Customer to load the grid.'}
           </p>
         )}
-        {gridError  && <div className="error-banner">{gridError}</div>}
-        {fetchError && <div className="error-banner">{fetchError.message}</div>}
+        {gridError     && <div className="error-banner">{gridError}</div>}
+        {itemViewError && <div className="error-banner">{itemViewError}</div>}
+        {fetchError    && <div className="error-banner">{fetchError.message}</div>}
         {importResult && (
           <div style={{
             background: importResult.errors.length ? 'var(--c-alert-danger-bg)' : 'var(--c-alert-success-bg)',
@@ -1623,7 +1788,23 @@ map.get(itemNo).months[mk] = {
           </div>
         )}
 
-        {canLoad && (
+        {canLoad && viewMode === 'item' && (
+          <ItemViewGrid
+            buCode={buCode}
+            ftCode={ftCode}
+            channelCode={channelCode}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            itemNo={itemNo}
+            itemDetails={selectedItemDetails}
+            me={me}
+            pts={pts}
+            currencySymbol={currencySymbol}
+            onError={setItemViewError}
+          />
+        )}
+
+        {canLoad && viewMode === 'customer' && (
           <div className={`ag-theme-alpine${theme === 'dark' ? '-dark' : ''}`} style={{ height: 'calc(100vh - 320px)', minHeight: 400, width: '100%' }}>
             {isLoading ? (
               <div className="loading">Loading forecast data…</div>
@@ -1682,7 +1863,7 @@ map.get(itemNo).months[mk] = {
           </div>
         )}
 
-        {canLoad && !isLoading && rowData.length === 0 && (
+        {canLoad && viewMode === 'customer' && !isLoading && rowData.length === 0 && (
           <p className="text-muted mt-8" style={{ fontSize: 13 }}>
             No forecast rows found for the selected filters. Click any future month cell to add one.
           </p>
@@ -1897,7 +2078,7 @@ map.get(itemNo).months[mk] = {
         />
       )}
 
-      {canLoad && (
+      {canLoad && viewMode === 'customer' && (
         <ForecastSummaryPanel
           buCode={buCode}
           ftCode={ftCode}

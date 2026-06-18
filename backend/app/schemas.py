@@ -172,10 +172,35 @@ class ForecastRowCreate(BaseModel):
     Notes:            Optional[str]     = None
 
 class ForecastRowUpdate(BaseModel):
-    Quantity:      Decimal
+    Quantity:      Optional[Decimal] = None   # None → stored as 0 (blank-cell behaviour)
     Price:         Optional[Decimal] = None
     PriceTypeCode: Optional[int]     = None
     Notes:         Optional[str]     = None
+
+
+# ── By-item view ────────────────────────────────────────────────────────────────
+class ForecastRowByItemOut(BaseModel):
+    EntryNo:          int
+    BusinessUnitCode: str
+    ForecastTypeCode: int
+    SalesChannelCode: str
+    CustomerCode:     str
+    CustomerName:     str
+    ItemNo:           str
+    ForecastDate:     date
+    PriceTypeCode:    Optional[int]    = None
+    PriceTypeName:    Optional[str]    = None
+    Price:            Decimal
+    Quantity:         Decimal
+    Notes:            Optional[str]    = None
+    IsEditable:       bool
+
+
+class ItemSearchOut(ORMBase):
+    ItemNo:        str
+    Description:   str
+    BrandCode:     str
+    UnitOfMeasure: Optional[str] = None
 
 
 # ── Actuals ────────────────────────────────────────────────────────────────────

@@ -20,6 +20,9 @@ export const fetchItems = (buCode, brandCode = null) =>
   client.get(`/reference/items/${buCode}`, { params: brandCode ? { brand_code: brandCode } : {} })
     .then(r => r.data)
 
+export const searchItems = (buCode, q) =>
+  client.get(`/reference/items/${buCode}/search`, { params: { q } }).then(r => r.data)
+
 export const fetchCycles = (forecastTypeCode = null) =>
   client.get('/reference/cycles', { params: forecastTypeCode ? { forecast_type_code: forecastTypeCode } : {} })
     .then(r => r.data)
@@ -30,6 +33,9 @@ export const fetchMe = () => client.get('/me').then(r => r.data)
 // ── Forecast ──────────────────────────────────────────────────────────────────
 export const fetchForecast = (buCode, params) =>
   client.get(`/forecast/${buCode}`, { params }).then(r => r.data)
+
+export const fetchForecastByItem = (buCode, params) =>
+  client.get(`/forecast/${buCode}/by-item`, { params }).then(r => r.data)
 
 export const fetchSupplyForecast = (buCode, params) =>
   client.get(`/forecast/${buCode}`, { params }).then(r => r.data)
