@@ -105,12 +105,10 @@ def sync_supply_row(sales_row: ForecastData, db: Session) -> None:
         ForecastData.CustomerCode     == sales_row.CustomerCode,
         ForecastData.ItemNo           == sales_row.ItemNo,
         ForecastData.ForecastDate     == sales_row.ForecastDate,
-        ForecastData.PriceTypeCode    == sales_row.PriceTypeCode,
     ).first()
 
     if existing:
         existing.Quantity     = sales_row.Quantity
-        existing.Price        = sales_row.Price
         existing.ModifiedBy   = system_user_id
         existing.ModifiedDate = now
         existing.Notes        = "Auto-synced from Sales forecast"
@@ -122,8 +120,8 @@ def sync_supply_row(sales_row: ForecastData, db: Session) -> None:
             CustomerCode     = sales_row.CustomerCode,
             ItemNo           = sales_row.ItemNo,
             ForecastDate     = sales_row.ForecastDate,
-            PriceTypeCode    = sales_row.PriceTypeCode,
-            Price            = sales_row.Price,
+            IsPriceOverride  = False,
+            OverridePrice    = None,
             Quantity         = sales_row.Quantity,
             Notes            = "Auto-synced from Sales forecast",
             CreatedBy        = system_user_id,
@@ -135,19 +133,16 @@ def sync_supply_row(sales_row: ForecastData, db: Session) -> None:
 
 
 def delete_supply_row(
-    bu_code:         str,
-    channel_code:    str,
-    customer_code:   str,
-    item_no:         str,
-    forecast_date:   date,
-    price_type_code: int | None,
-    old_price:       float,
-    db:              Session,
+    bu_code:       str,
+    channel_code:  str,
+    customer_code: str,
+    item_no:       str,
+    forecast_date: date,
+    db:            Session,
 ) -> None:
     """
-    Delete the Supply row at old_price for the given dimension key.
-    Called during the price-change delete+insert flow, before the Sales row
-    is deleted, within the same transaction.
+    Delete the Supply row for the given dimension key.
+    Called when a Sales forecast row is deleted, within the same transaction.
 
     Does nothing if the period is inside the lock window.
     """
@@ -157,16 +152,11 @@ def delete_supply_row(
 
     supply_type_code = _get_supply_type_code(db)
 
-    q = db.query(ForecastData).filter(
+    db.query(ForecastData).filter(
         ForecastData.BusinessUnitCode == bu_code,
         ForecastData.ForecastTypeCode == supply_type_code,
         ForecastData.SalesChannelCode == channel_code,
         ForecastData.CustomerCode     == customer_code,
         ForecastData.ItemNo           == item_no,
         ForecastData.ForecastDate     == forecast_date,
-        ForecastData.Price            == old_price,
-    )
-    if price_type_code is not None:
-        q = q.filter(ForecastData.PriceTypeCode == price_type_code)
-
-    q.delete(synchronize_session=False)
+    ).delete(synchronize_session=False)

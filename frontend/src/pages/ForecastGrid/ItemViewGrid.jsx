@@ -1,7 +1,7 @@
 /**
  * ItemViewGrid.jsx
  *
- * Item view: rows are customers (grouped by price type), columns are months.
+ * Item view: rows are customers, columns are months.
  * Data is read-only for creation — edits go to existing PUT endpoint.
  * Editability is driven by IsEditable flag returned per row by the API.
  */
@@ -62,6 +62,36 @@ function QtyCellRenderer(params) {
   )
 }
 
+// ── Cell renderer: effective price with optional override-clear button ────────
+function EffPriceCellRenderer({ data, currencySymbol, onClearOverride }) {
+  const rt = data?.rowType
+  if (!data || rt === 'subtotal' || rt === 'grandtotal') return null
+
+  const price = data.effectivePrice
+  const formatted = price != null && price !== 0
+    ? `${currencySymbol}${Number(price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+    : '—'
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+      height: '100%', padding: '0 8px', gap: 4, fontSize: 11, boxSizing: 'border-box',
+    }}>
+      {formatted}
+      {data.isPriceOverride && (
+        <button
+          onClick={e => { e.stopPropagation(); onClearOverride(data) }}
+          title="Clear price override — revert to list price"
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: '#2196F3', padding: '0 2px', fontSize: 13, lineHeight: 1,
+          }}
+        >✕</button>
+      )}
+    </div>
+  )
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 export default function ItemViewGrid({
   buCode,
@@ -72,7 +102,6 @@ export default function ItemViewGrid({
   itemNo,
   itemDetails,   // { ItemNo, Description, BrandCode, UnitOfMeasure }
   me,
-  pts,           // price types reference array
   currencySymbol,
   onError,
 }) {
@@ -103,27 +132,25 @@ export default function ItemViewGrid({
   }, [fetchError])
 
   // ── Pivot flat API rows → grid rows ────────────────────────────────────────
-  // One grid row per (CustomerCode, PriceTypeCode) pair.
-  // Structure: { rowType:'customer', customerCode, customerName, priceTypeCode, priceTypeName, price, months:{ym:{entryNo,qty,isEditable}} }
-  const { customerRows, priceTypeOrder } = useMemo(() => {
-    const rowMap = new Map()        // key: `${customerCode}|${priceTypeCode}`
-    const ptOrder = []              // price type codes in appearance order
+  const { customerRows } = useMemo(() => {
+    const rowMap = new Map()  // key: customerCode
 
     for (const fr of rawRows) {
       const ym  = monthKey(fr.ForecastDate)
-      const key = `${fr.CustomerCode}|${fr.PriceTypeCode ?? 'null'}`
+      const key = fr.CustomerCode
 
       if (!rowMap.has(key)) {
         rowMap.set(key, {
-          rowType:       'customer',
-          customerCode:  fr.CustomerCode,
-          customerName:  fr.CustomerName,
-          priceTypeCode: fr.PriceTypeCode,
-          priceTypeName: fr.PriceTypeName ?? '',
-          price:         parseFloat(fr.Price),
-          months:        {},
+          rowType:         'customer',
+          customerCode:    fr.CustomerCode,
+          customerName:    fr.CustomerName,
+          effectivePrice:  parseFloat(fr.effective_price ?? 0),
+          isMissingPrice:  fr.is_missing_price ?? false,
+          isPriceOverride: fr.IsPriceOverride ?? false,
+          overridePrice:   fr.OverridePrice,
+          entryNoForPrice: fr.EntryNo,
+          months:          {},
         })
-        if (!ptOrder.includes(fr.PriceTypeCode)) ptOrder.push(fr.PriceTypeCode)
       }
 
       rowMap.get(key).months[ym] = {
@@ -133,52 +160,23 @@ export default function ItemViewGrid({
       }
     }
 
-    // Sort rows: price type order, then customer name within each price type
-    const rows = Array.from(rowMap.values()).sort((a, b) => {
-      const ptA = ptOrder.indexOf(a.priceTypeCode)
-      const ptB = ptOrder.indexOf(b.priceTypeCode)
-      if (ptA !== ptB) return ptA - ptB
-      return a.customerName.localeCompare(b.customerName)
-    })
+    const rows = Array.from(rowMap.values()).sort((a, b) =>
+      a.customerName.localeCompare(b.customerName)
+    )
 
-    return { customerRows: rows, priceTypeOrder: ptOrder }
+    return { customerRows: rows }
   }, [rawRows])
 
-  // ── Build rows with subtotals and grand total ──────────────────────────────
+  // ── Build rows with grand total ────────────────────────────────────────────
   const rowData = useMemo(() => {
-    const result = []
-    const grandTotals = {}
+    const result = [...customerRows]
 
-    // Group customer rows by price type
-    const groups = new Map()
-    for (const pt of priceTypeOrder) {
-      groups.set(pt, customerRows.filter(r => r.priceTypeCode === pt))
-    }
-
-    for (const [ptCode, rows] of groups) {
-      result.push(...rows)
-
-      // Subtotal row for this price type
-      const subtotals = {}
-      for (const ym of months) {
-        const sum = rows.reduce((acc, r) => acc + (r.months[ym]?.quantity ?? 0), 0)
-        subtotals[ym] = { quantity: sum }
-        grandTotals[ym] = (grandTotals[ym] ?? 0) + sum
-      }
-      const ptName = rows[0]?.priceTypeName ?? String(ptCode ?? '')
-      result.push({
-        rowType:      'subtotal',
-        priceTypeCode: ptCode,
-        priceTypeName: ptName,
-        customerName:  `Subtotal — ${ptName}`,
-        months:        subtotals,
-      })
-    }
-
-    // Grand total row
     if (customerRows.length > 0) {
       const grandMonths = {}
-      for (const ym of months) grandMonths[ym] = { quantity: grandTotals[ym] ?? 0 }
+      for (const ym of months) {
+        const sum = customerRows.reduce((acc, r) => acc + (r.months[ym]?.quantity ?? 0), 0)
+        grandMonths[ym] = { quantity: sum }
+      }
       result.push({
         rowType:     'grandtotal',
         customerName: 'Total',
@@ -187,11 +185,25 @@ export default function ItemViewGrid({
     }
 
     return result
-  }, [customerRows, priceTypeOrder, months])
+  }, [customerRows, months])
 
   // Stable ref for onCellValueChanged
   const rowDataRef = useRef([])
   rowDataRef.current = rowData
+
+  // ── Clear price override handler ──────────────────────────────────────────
+  const handleClearOverride = useCallback(async (row) => {
+    if (!row?.entryNoForPrice) return
+    try {
+      await updateForecastRow(buCode, row.entryNoForPrice, {
+        is_price_override: false,
+        override_price:    null,
+      })
+      qc.invalidateQueries({ queryKey })
+    } catch (e) {
+      onError?.(e.message)
+    }
+  }, [buCode, queryKey, qc, onError])
 
   // ── Cell edit handler ──────────────────────────────────────────────────────
   const onCellValueChanged = useCallback(async (params) => {
@@ -202,27 +214,23 @@ export default function ItemViewGrid({
 
     if (params.node?.rowPinned) return
     const rt = params.data?.rowType
-    if (rt === 'subtotal' || rt === 'grandtotal') return
+    if (rt === 'grandtotal') return
 
-    const customerCode  = params.data?.customerCode
-    const priceTypeCode = params.data?.priceTypeCode
-    const key = `${customerCode}|${priceTypeCode ?? 'null'}`
+    const customerCode = params.data?.customerCode
     const liveRow = rowDataRef.current.find(
-      r => r.rowType === 'customer' && r.customerCode === customerCode && r.priceTypeCode === priceTypeCode
+      r => r.rowType === 'customer' && r.customerCode === customerCode
     )
-    const cell    = liveRow?.months?.[ym]
+    const cell = liveRow?.months?.[ym]
     if (!cell?.entryNo) return  // no entry for this cell — item view is read-only for creates
 
     const rawValue = params.newValue
-    // null / '' → send null to API which stores 0
     const quantity = (rawValue === '' || rawValue == null) ? null : parseFloat(rawValue)
 
     try {
       const updated = await updateForecastRow(buCode, cell.entryNo, {
-        Quantity:      quantity,
-        Notes:         null,
+        Quantity: quantity,
+        Notes:    null,
       })
-      // Optimistic cache update
       qc.setQueryData(queryKey, old => (old ?? []).map(r =>
         r.EntryNo === cell.entryNo
           ? { ...r, Quantity: String(updated.Quantity) }
@@ -247,40 +255,24 @@ export default function ItemViewGrid({
         cellStyle: params => {
           const rt = params.data?.rowType
           if (rt === 'grandtotal') return { fontWeight: 700, fontSize: 11 }
-          if (rt === 'subtotal')   return { fontStyle: 'italic', fontSize: 11, color: 'var(--c-muted)' }
           return { fontSize: 11 }
         },
       },
       {
-        headerName: 'Price Type',
-        field: 'priceTypeName',
-        width: 110,
-        pinned: 'left',
-        editable: false,
-        cellStyle: { fontSize: 11 },
-        valueGetter: params => {
-          const rt = params.data?.rowType
-          if (rt === 'subtotal' || rt === 'grandtotal') return ''
-          return params.data?.priceTypeName ?? ''
-        },
-      },
-      {
-        headerName: `Price (${currencySymbol})`,
-        field: 'price',
-        width: 95,
+        headerName: `Eff. Price (${currencySymbol})`,
+        field: 'effectivePrice',
+        width: 130,
         pinned: 'left',
         editable: false,
         type: 'numericColumn',
-        cellStyle: { fontSize: 11 },
-        valueGetter: params => {
+        cellRenderer: EffPriceCellRenderer,
+        cellRendererParams: { currencySymbol, onClearOverride: handleClearOverride },
+        cellStyle: params => {
           const rt = params.data?.rowType
-          if (rt === 'subtotal' || rt === 'grandtotal') return null
-          const p = params.data?.price
-          return p != null ? Number(p) : null
-        },
-        valueFormatter: params => {
-          if (params.value == null) return ''
-          return `${currencySymbol}${Number(params.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
+          if (rt === 'grandtotal') return {}
+          if (params.data?.isPriceOverride) return { background: '#E8F4FD', borderLeft: '3px solid #2196F3', fontSize: 11, padding: 0 }
+          if (params.data?.isMissingPrice)  return { background: '#FFF3CD', fontSize: 11, padding: 0 }
+          return { fontSize: 11, padding: 0 }
         },
       },
     ]
@@ -339,14 +331,36 @@ export default function ItemViewGrid({
       cellStyle: params => {
         const rt = params.data?.rowType
         if (rt === 'grandtotal') return { fontWeight: 700, background: 'var(--c-row-pinned-bg)', padding: 0 }
-        if (rt === 'subtotal')   return { fontWeight: 600, background: 'var(--c-hover-row)', padding: 0 }
         return { fontWeight: 700, background: 'var(--c-hover-row)', padding: 0 }
       },
       cellRenderer: QtyCellRenderer,
     }
 
-    return [...fixed, ...monthCols, totalCol]
-  }, [months, currencySymbol])
+    const revenueCol = {
+      headerName: `Revenue (${currencySymbol})`,
+      field: 'revenue',
+      width: 120,
+      suppressSizeToFit: true,
+      type: 'numericColumn',
+      editable: false,
+      pinned: 'right',
+      valueGetter: params => {
+        const rt = params.data?.rowType
+        if (rt === 'grandtotal') return null
+        const total = params.data?.rowTotal ?? 0
+        const price = params.data?.effectivePrice ?? 0
+        if (!total || !price) return null
+        return total * price
+      },
+      valueFormatter: params => {
+        if (params.value == null) return ''
+        return `${currencySymbol}${Number(params.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      },
+      cellStyle: { fontSize: 11 },
+    }
+
+    return [...fixed, ...monthCols, totalCol, revenueCol]
+  }, [months, currencySymbol, handleClearOverride])
 
   // Add rowTotal to each row for the totals column
   const rowDataWithTotals = useMemo(() =>
@@ -400,8 +414,7 @@ export default function ItemViewGrid({
           getRowId={params => {
             const rt = params.data?.rowType
             if (rt === 'grandtotal') return 'grandtotal'
-            if (rt === 'subtotal')   return `subtotal-${params.data.priceTypeCode}`
-            return `${params.data.customerCode}-${params.data.priceTypeCode ?? 'null'}`
+            return params.data.customerCode
           }}
           columnDefs={colDefs}
           suppressRowClickSelection
@@ -417,7 +430,6 @@ export default function ItemViewGrid({
           getRowStyle={params => {
             const rt = params.data?.rowType
             if (rt === 'grandtotal') return { background: 'var(--c-row-pinned-bg)', fontWeight: 700, borderTop: '2px solid var(--c-row-pinned-border)' }
-            if (rt === 'subtotal')   return { background: 'var(--c-hover-row)', borderBottom: '2px solid var(--c-row-pinned-border)' }
             return {}
           }}
         />

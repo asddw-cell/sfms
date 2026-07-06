@@ -36,14 +36,14 @@ class ChangeRow(BaseModel):
     ForecastDate:     date
     ChangedBy:        str
     ChangedAt:        datetime
-    ChangeType:       str            # 'Quantity', 'Price', 'PriceType', 'New', 'Deleted'
+    ChangeType:       str            # 'Quantity', 'Price', 'Override', 'New', 'Deleted'
     QtyBefore:        Optional[Decimal]
     QtyAfter:         Optional[Decimal]
     QtyDelta:         Optional[Decimal]
-    PriceBefore:      Optional[Decimal]
-    PriceAfter:       Optional[Decimal]
-    PriceTypeCodeBefore: Optional[int]
-    PriceTypeCodeAfter:  Optional[int]
+    PriceBefore:      Optional[Decimal]     # OverridePrice before change
+    PriceAfter:       Optional[Decimal]     # OverridePrice after change
+    IsPriceOverrideBefore: Optional[bool]
+    IsPriceOverrideAfter:  Optional[bool]
 
 
 @router.get("/{bu_code}", response_model=list[ChangeRow])
@@ -117,8 +117,8 @@ def get_changes(
                 f.ItemNo,
                 f.ForecastDate,
                 f.Quantity,
-                f.Price,
-                f.PriceTypeCode,
+                f.OverridePrice,
+                f.IsPriceOverride,
                 f.Notes,
                 f.CreatedBy,
                 f.CreatedDate,
@@ -141,8 +141,8 @@ def get_changes(
                 h.ItemNo,
                 h.ForecastDate,
                 h.Quantity,
-                h.Price,
-                h.PriceTypeCode,
+                h.OverridePrice,
+                h.IsPriceOverride,
                 h.Notes,
                 h.CreatedBy,
                 h.CreatedDate,
@@ -163,14 +163,14 @@ def get_changes(
                 av.CustomerCode,
                 av.ItemNo,
                 av.ForecastDate,
-                av.Quantity                                                      AS QtyAfter,
-                LAG(av.Quantity)      OVER (PARTITION BY av.EntryNo ORDER BY av.SysStartTime) AS QtyBefore,
-                av.Price                                                         AS PriceAfter,
-                LAG(av.Price)         OVER (PARTITION BY av.EntryNo ORDER BY av.SysStartTime) AS PriceBefore,
-                av.PriceTypeCode                                                 AS PriceTypeCodeAfter,
-                LAG(av.PriceTypeCode) OVER (PARTITION BY av.EntryNo ORDER BY av.SysStartTime) AS PriceTypeCodeBefore,
+                av.Quantity                                                            AS QtyAfter,
+                LAG(av.Quantity)        OVER (PARTITION BY av.EntryNo ORDER BY av.SysStartTime) AS QtyBefore,
+                av.OverridePrice                                                       AS PriceAfter,
+                LAG(av.OverridePrice)   OVER (PARTITION BY av.EntryNo ORDER BY av.SysStartTime) AS PriceBefore,
+                av.IsPriceOverride                                                     AS IsPriceOverrideAfter,
+                LAG(av.IsPriceOverride) OVER (PARTITION BY av.EntryNo ORDER BY av.SysStartTime) AS IsPriceOverrideBefore,
                 av.ModifiedBy,
-                av.SysStartTime                                                  AS ChangedAt
+                av.SysStartTime                                                        AS ChangedAt
             FROM AllVersions av
         ),
 
@@ -180,24 +180,24 @@ def get_changes(
                 EntryNo, BusinessUnitCode, SalesChannelCode, CustomerCode,
                 ItemNo, ForecastDate, ModifiedBy, ChangedAt,
                 CASE
-                    WHEN QtyBefore IS NULL                                          THEN 'New'
-                    WHEN PriceAfter <> PriceBefore AND QtyAfter  = QtyBefore        THEN 'Price'
-                    WHEN PriceAfter <> PriceBefore AND QtyAfter <> QtyBefore        THEN 'Price + Qty'
-                    WHEN PriceTypeCodeAfter <> PriceTypeCodeBefore                  THEN 'PriceType'
+                    WHEN QtyBefore IS NULL                                                THEN 'New'
+                    WHEN PriceAfter <> PriceBefore AND QtyAfter  = QtyBefore              THEN 'Price'
+                    WHEN PriceAfter <> PriceBefore AND QtyAfter <> QtyBefore              THEN 'Price + Qty'
+                    WHEN IsPriceOverrideAfter <> IsPriceOverrideBefore                    THEN 'Override'
                     ELSE 'Quantity'
                 END AS ChangeType,
-                ISNULL(QtyBefore,   0) AS QtyBefore,
+                ISNULL(QtyBefore,    0) AS QtyBefore,
                 QtyAfter,
                 QtyAfter - ISNULL(QtyBefore, 0) AS QtyDelta,
-                ISNULL(PriceBefore, 0) AS PriceBefore,
+                PriceBefore,
                 PriceAfter,
-                PriceTypeCodeBefore,
-                PriceTypeCodeAfter
+                IsPriceOverrideBefore,
+                IsPriceOverrideAfter
             FROM QtyPriceEdits
-            WHERE QtyBefore IS NULL                            -- new row inserts
-               OR QtyAfter         <> QtyBefore               -- qty changed
-               OR PriceAfter       <> PriceBefore             -- price changed
-               OR PriceTypeCodeAfter <> PriceTypeCodeBefore   -- price type changed
+            WHERE QtyBefore IS NULL                                  -- new row inserts
+               OR QtyAfter             <> QtyBefore                  -- qty changed
+               OR ISNULL(PriceAfter,0) <> ISNULL(PriceBefore,0)     -- override price changed
+               OR IsPriceOverrideAfter <> IsPriceOverrideBefore      -- override flag toggled
         )
 
         SELECT TOP (:limit)
@@ -217,8 +217,8 @@ def get_changes(
             ac.QtyDelta,
             ac.PriceBefore,
             ac.PriceAfter,
-            ac.PriceTypeCodeBefore,
-            ac.PriceTypeCodeAfter
+            ac.IsPriceOverrideBefore,
+            ac.IsPriceOverrideAfter
         FROM AllChanges ac
         LEFT JOIN tblUser     u ON u.UserID           = ac.ModifiedBy
         LEFT JOIN tblCustomer c ON c.Code             = ac.CustomerCode
@@ -231,24 +231,24 @@ def get_changes(
 
     return [
         ChangeRow(
-            EntryNo              = r.EntryNo,
-            BusinessUnitCode     = r.BusinessUnitCode,
-            SalesChannelCode     = r.SalesChannelCode,
-            CustomerCode         = r.CustomerCode,
-            CustomerName         = r.CustomerName,
-            ItemNo               = r.ItemNo,
-            ItemDescription      = r.ItemDescription,
-            ForecastDate         = r.ForecastDate,
-            ChangedBy            = r.ChangedBy,
-            ChangedAt            = r.ChangedAt,
-            ChangeType           = r.ChangeType,
-            QtyBefore            = Decimal(str(r.QtyBefore))  if r.QtyBefore  is not None else None,
-            QtyAfter             = Decimal(str(r.QtyAfter))   if r.QtyAfter   is not None else None,
-            QtyDelta             = Decimal(str(r.QtyDelta))   if r.QtyDelta   is not None else None,
-            PriceBefore          = Decimal(str(r.PriceBefore)) if r.PriceBefore is not None else None,
-            PriceAfter           = Decimal(str(r.PriceAfter))  if r.PriceAfter  is not None else None,
-            PriceTypeCodeBefore  = r.PriceTypeCodeBefore,
-            PriceTypeCodeAfter   = r.PriceTypeCodeAfter,
+            EntryNo                = r.EntryNo,
+            BusinessUnitCode       = r.BusinessUnitCode,
+            SalesChannelCode       = r.SalesChannelCode,
+            CustomerCode           = r.CustomerCode,
+            CustomerName           = r.CustomerName,
+            ItemNo                 = r.ItemNo,
+            ItemDescription        = r.ItemDescription,
+            ForecastDate           = r.ForecastDate,
+            ChangedBy              = r.ChangedBy,
+            ChangedAt              = r.ChangedAt,
+            ChangeType             = r.ChangeType,
+            QtyBefore              = Decimal(str(r.QtyBefore))   if r.QtyBefore   is not None else None,
+            QtyAfter               = Decimal(str(r.QtyAfter))    if r.QtyAfter    is not None else None,
+            QtyDelta               = Decimal(str(r.QtyDelta))    if r.QtyDelta    is not None else None,
+            PriceBefore            = Decimal(str(r.PriceBefore)) if r.PriceBefore is not None else None,
+            PriceAfter             = Decimal(str(r.PriceAfter))  if r.PriceAfter  is not None else None,
+            IsPriceOverrideBefore  = bool(r.IsPriceOverrideBefore) if r.IsPriceOverrideBefore is not None else None,
+            IsPriceOverrideAfter   = bool(r.IsPriceOverrideAfter)  if r.IsPriceOverrideAfter  is not None else None,
         )
         for r in rows
     ]

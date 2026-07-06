@@ -10,23 +10,21 @@ import MonthPicker from './MonthPicker'
 export default function AddItemsModal({
   items,           // full item list for the BU
   brands,          // full brands list — used to resolve brand name → code
-  priceTypes,      // price type reference data
   months,          // currently visible months (YYYY-MM strings) — used as defaults
   existingItemNos, // Set of ItemNo already in the grid (excluded from picker)
   selectedBrands,  // array of brand names currently filtered in the grid
-  onAdd,           // fn({ selectedItems, monthFrom, monthTo, priceTypeCode }) → Promise
+  onAdd,           // fn({ selectedItems, monthFrom, monthTo }) → Promise
   onClose,
   saving,
 }) {
   const defaultFrom = months[0] ?? ''
   const defaultTo   = months[months.length - 1] ?? ''
 
-  const [search,        setSearch]        = useState('')
-  const [selected,      setSelected]      = useState([])
-  const [monthFrom,     setMonthFrom]     = useState(defaultFrom)
-  const [monthTo,       setMonthTo]       = useState(defaultTo)
-  const [priceTypeCode, setPriceTypeCode] = useState(priceTypes?.[0]?.Code ?? '')
-  const [error,         setError]         = useState('')
+  const [search,    setSearch]    = useState('')
+  const [selected,  setSelected]  = useState([])
+  const [monthFrom, setMonthFrom] = useState(defaultFrom)
+  const [monthTo,   setMonthTo]   = useState(defaultTo)
+  const [error,     setError]     = useState('')
 
   // Resolve selected brand names → brand codes for comparison with item.BrandCode
   const selectedBrandCodes = useMemo(() => {
@@ -73,11 +71,10 @@ export default function AddItemsModal({
   async function handleAdd() {
     setError('')
     if (!selected.length)    { setError('Please select at least one item.'); return }
-    if (!priceTypeCode)      { setError('Please select a Price Type.'); return }
     if (!monthFrom || !monthTo) { setError('Please select a month range.'); return }
     if (monthFrom > monthTo) { setError('"From" month must be before "To" month.'); return }
     if (rowsToInsert > 500)  { setError(`This would insert ${rowsToInsert} rows. Please narrow the range or select fewer items.`); return }
-    await onAdd({ selectedItems, monthFrom, monthTo, priceTypeCode })
+    await onAdd({ selectedItems, monthFrom, monthTo })
   }
 
   function handleBackdrop(e) {
@@ -110,21 +107,6 @@ export default function AddItemsModal({
               {monthCount > 0 ? `${monthCount} month${monthCount !== 1 ? 's' : ''}` : '—'}
             </span>
           </div>
-        </div>
-
-        {/* ── Price Type ── */}
-        <div className="field-group" style={{ marginBottom: 14 }}>
-          <label>Price Type *</label>
-          <select
-            value={priceTypeCode}
-            onChange={e => setPriceTypeCode(e.target.value)}
-            style={{ width: '100%' }}
-          >
-            <option value="">— Select —</option>
-            {priceTypes.map(pt => (
-              <option key={pt.Code} value={pt.Code}>{pt.Name}</option>
-            ))}
-          </select>
         </div>
 
         {/* ── Search ── */}

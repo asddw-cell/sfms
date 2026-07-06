@@ -260,7 +260,7 @@ export default function Changes() {
                         <td style={{ fontWeight: 500, color: r.ChangedBy === 'System' ? 'var(--c-muted)' : undefined, fontStyle: r.ChangedBy === 'System' ? 'italic' : undefined }}>{r.ChangedBy}</td>
                         <td>
                           <span className={`badge ${
-                            r.ChangeType === 'Price' || r.ChangeType === 'PriceType'
+                            r.ChangeType === 'Price' || r.ChangeType === 'Override'
                               ? 'badge-warn'
                               : r.ChangeType === 'New'
                               ? 'badge-success'

@@ -2,10 +2,9 @@
 schemas.py - Pydantic v2 request and response schemas.
 """
 from pydantic import BaseModel, ConfigDict
-from datetime import datetime
-from typing import Optional
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal, Optional
 
 
 class ORMBase(BaseModel):
@@ -59,12 +58,6 @@ class ItemOut(ORMBase):
     IsActive_US:   bool
     IsActive_AU:   bool
     IsActive_MX:   bool
-
-class PriceTypeOut(ORMBase):
-    Code: int
-    Name: str
-    IsActive: bool
-
 
 # ── Roles & Users ──────────────────────────────────────────────────────────────
 class RoleOut(ORMBase):
@@ -151,14 +144,18 @@ class ForecastRowOut(ORMBase):
     ItemDescription:  Optional[str] = None   # joined from tblItem
     BrandName:        Optional[str] = None   # joined from tblItem → tblBrand
     ForecastDate:     date
-    PriceTypeCode:    int
-    Price:            Decimal
+    OverridePrice:    Optional[Decimal] = None
+    IsPriceOverride:  bool = False
     Quantity:         Decimal
     Notes:            Optional[str]
     CreatedBy:        int
     CreatedDate:      datetime
     ModifiedBy:       Optional[int]
     ModifiedDate:     Optional[datetime]
+    # Computed fields — not stored in DB, populated by the pricing service
+    effective_price:  Decimal = Decimal("0")
+    is_missing_price: bool    = False
+    revenue:          Decimal = Decimal("0")
 
 class ForecastRowCreate(BaseModel):
     ForecastTypeCode: int
@@ -166,16 +163,16 @@ class ForecastRowCreate(BaseModel):
     CustomerCode:     str
     ItemNo:           str
     ForecastDate:     date
-    PriceTypeCode:    Optional[int]     = None
-    Price:            Optional[Decimal] = Decimal('0')
+    override_price:   Optional[Decimal] = None
+    is_price_override: bool             = False
     Quantity:         Decimal
     Notes:            Optional[str]     = None
 
 class ForecastRowUpdate(BaseModel):
-    Quantity:      Optional[Decimal] = None   # None → stored as 0 (blank-cell behaviour)
-    Price:         Optional[Decimal] = None
-    PriceTypeCode: Optional[int]     = None
-    Notes:         Optional[str]     = None
+    Quantity:          Optional[Decimal] = None   # None → stored as 0 (blank-cell behaviour)
+    override_price:    Optional[Decimal] = None
+    is_price_override: Optional[bool]    = None
+    Notes:             Optional[str]     = None
 
 
 # ── By-item view ────────────────────────────────────────────────────────────────
@@ -188,11 +185,13 @@ class ForecastRowByItemOut(BaseModel):
     CustomerName:     str
     ItemNo:           str
     ForecastDate:     date
-    PriceTypeCode:    Optional[int]    = None
-    PriceTypeName:    Optional[str]    = None
-    Price:            Decimal
+    OverridePrice:    Optional[Decimal] = None
+    IsPriceOverride:  bool              = False
+    effective_price:  Decimal           = Decimal("0")
+    is_missing_price: bool              = False
+    revenue:          Decimal           = Decimal("0")
     Quantity:         Decimal
-    Notes:            Optional[str]    = None
+    Notes:            Optional[str]     = None
     IsEditable:       bool
 
 
@@ -263,3 +262,45 @@ class LYActualsRow(BaseModel):
     ActualsDate:       date   # original last-year date — frontend shifts +12 months
     ActualsQty:        Decimal
     ActualsTotalValue: Decimal
+
+
+# ── Prices ─────────────────────────────────────────────────────────────────────
+class PriceRangeCreate(BaseModel):
+    CustomerCode:     str
+    SalesChannelCode: str
+    ItemNo:           str
+    StartDate:        str   # YYYY-MM-DD — parsed by pricing service
+    EndDate:          str   # YYYY-MM-DD — parsed by pricing service
+    Price:            Decimal
+
+class ImportConfirmRequest(BaseModel):
+    import_token:        str
+    conflict_resolution: Literal["overwrite", "skip"]
+
+class PriceRangeResponse(BaseModel):
+    # Collapsed view — contiguous monthly rows with same price shown as one range
+    PriceID_first:    int
+    PriceIDs:         list[int] = []   # all PriceIDs in the range (for bulk delete)
+    CustomerCode:     str
+    CustomerName:     str
+    SalesChannelCode: str
+    ItemNo:           str
+    ItemDescription:  str
+    StartDate:        date    # First PriceMonth in the contiguous range
+    EndDate:          date    # Last PriceMonth in the contiguous range
+    Price:            Decimal
+
+class ImportValidationResponse(BaseModel):
+    valid_rows:    int
+    date_errors:   list[dict]
+    conflict_rows: list[dict]
+    import_token:  Optional[str] = None
+
+class ImportConfirmResponse(BaseModel):
+    inserted: int
+    updated:  int
+    skipped:  int
+
+class PriceUpdate(BaseModel):
+    new_price: Decimal
+    price_ids: list[int]

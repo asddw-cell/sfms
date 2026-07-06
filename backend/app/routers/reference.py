@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import (
     BusinessUnit, ForecastType, SalesChannel, Customer,
-    Brand, Item, PriceType, Currency, UserCustomer, UserBusinessUnit, Role
+    Brand, Item, Currency, UserCustomer, UserBusinessUnit, Role
 )
 from app.schemas import (
     BusinessUnitOut, ForecastTypeOut, SalesChannelOut, CustomerOut,
-    BrandOut, ItemOut, ItemSearchOut, PriceTypeOut, CurrencyOut, RoleOut
+    BrandOut, ItemOut, ItemSearchOut, CurrencyOut, RoleOut
 )
 from app.auth.dev_auth import get_current_user
 from app.models import User
@@ -144,13 +144,6 @@ def search_items(
     results = query.order_by(Item.ItemNo).limit(50).all()
     return results
 
-
-@router.get("/price-types", response_model=list[PriceTypeOut])
-def list_price_types(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return db.query(PriceType).filter(PriceType.IsActive == True).all()
 
 @router.get("/roles", response_model=list[RoleOut])
 def list_roles(

@@ -10,7 +10,6 @@ export const fetchBusinessUnits = () => client.get('/reference/business-units').
 export const fetchCurrencies    = () => client.get('/reference/currencies').then(r => r.data)
 export const fetchForecastTypes = () => client.get('/reference/forecast-types').then(r => r.data)
 export const fetchSalesChannels = () => client.get('/reference/sales-channels').then(r => r.data)
-export const fetchPriceTypes    = () => client.get('/reference/price-types').then(r => r.data)
 export const fetchBrands        = () => client.get('/reference/brands').then(r => r.data)
 
 export const fetchCustomers = (buCode) =>
@@ -22,10 +21,6 @@ export const fetchItems = (buCode, brandCode = null) =>
 
 export const searchItems = (buCode, q) =>
   client.get(`/reference/items/${buCode}/search`, { params: { q } }).then(r => r.data)
-
-export const fetchCycles = (forecastTypeCode = null) =>
-  client.get('/reference/cycles', { params: forecastTypeCode ? { forecast_type_code: forecastTypeCode } : {} })
-    .then(r => r.data)
 
 // ── Current user ──────────────────────────────────────────────────────────────
 export const fetchMe = () => client.get('/me').then(r => r.data)
@@ -76,3 +71,33 @@ export const updateSupplyHorizon = (horizonId, payload) =>
 
 export const deactivateSupplyHorizon = (horizonId) =>
   client.delete(`/admin/supply-horizon/${horizonId}`).then(r => r.data)
+
+// ── Prices ────────────────────────────────────────────────────────────────────
+export const fetchPrices = (buCode, params) =>
+  client.get(`/prices/${buCode}`, { params }).then(r => r.data)
+
+export const upsertPrice = (buCode, body) =>
+  client.put(`/prices/${buCode}`, body).then(r => r.data)
+
+export const deletePrice = (buCode, priceId) =>
+  client.delete(`/prices/${buCode}/${priceId}`)
+
+export const downloadPriceTemplate = (buCode) =>
+  client.get(`/prices/${buCode}/template`, { responseType: 'blob' }).then(r => r.data)
+
+export const importPriceFile = (buCode, file) => {
+  const form = new FormData()
+  form.append('file', file)
+  return client.post(`/prices/${buCode}/import`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then(r => r.data)
+}
+
+export const confirmPriceImport = (buCode, importToken, conflictResolution) =>
+  client.post(`/prices/${buCode}/import/confirm`, {
+    import_token:        importToken,
+    conflict_resolution: conflictResolution,
+  }).then(r => r.data)
+
+export const updatePriceRange = (buCode, priceIdFirst, body) =>
+  client.patch(`/prices/${buCode}/${priceIdFirst}`, body).then(r => r.data)

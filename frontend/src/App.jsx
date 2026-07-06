@@ -5,6 +5,7 @@ import ForecastGrid from './pages/ForecastGrid/ForecastGrid'
 import Changes from './pages/Changes/Changes'
 import UserAdmin from './pages/Admin/UserAdmin'
 import SupplyHorizonAdmin from './pages/Admin/SupplyHorizonAdmin'
+import PriceMaintenance from './pages/PriceMaintenance/PriceMaintenance'
 import './index.css'
 import DevUserSwitcher from './components/DevUserSwitcher'
 import { ThemeProvider, useTheme } from './ThemeContext'
@@ -41,6 +42,9 @@ function Nav() {
       <img src="/goliath-logo.png" alt="Goliath" className="nav-logo" />
       <NavLink to="/forecast">Forecast Entry</NavLink>
       <NavLink to="/changes">Change History</NavLink>
+      {me?.role?.CanManageRefData && (
+        <NavLink to="/prices">Prices</NavLink>
+      )}
       {me?.role?.CanManageUsers && (
         <NavLink to="/admin/users">User Admin</NavLink>
       )}
@@ -77,6 +81,7 @@ function App() {
                 <Route path="/" element={<Navigate to="/forecast" replace />} />
                 <Route path="/forecast" element={<ForecastGrid />} />
                 <Route path="/changes" element={<Changes />} />
+                <Route path="/prices" element={<PriceMaintenance />} />
                 <Route path="/admin/users" element={<UserAdmin />} />
                 <Route path="/admin/supply-horizon" element={<SupplyHorizonAdmin />} />
               </Routes>

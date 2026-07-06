@@ -10,7 +10,7 @@ from app.db import get_db
 from app.auth.dev_auth import get_current_user
 from app.models import User
 from app.schemas import MeOut
-from app.routers import reference, forecast, actuals, changes, gm_copy, admin
+from app.routers import reference, forecast, actuals, changes, gm_copy, admin, prices
 
 
 app = FastAPI(
@@ -35,6 +35,7 @@ app.include_router(actuals.router)
 app.include_router(changes.router)
 app.include_router(gm_copy.router)
 app.include_router(admin.router)
+app.include_router(prices.router)
 
 @app.get("/api/v1/me", response_model=MeOut, tags=["Auth"])
 def get_me(

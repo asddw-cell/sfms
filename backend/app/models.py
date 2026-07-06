@@ -5,6 +5,7 @@ from sqlalchemy import (
     Column, Integer, String, Numeric, Date, DateTime, Boolean,
     ForeignKey, CheckConstraint, ForeignKeyConstraint
 )
+from sqlalchemy.dialects.mssql import DATETIME2
 from sqlalchemy.orm import relationship
 from app.db import Base
 
@@ -82,11 +83,20 @@ class Item(Base):
     brand = relationship("Brand", back_populates="items")
 
 
-class PriceType(Base):
-    __tablename__ = "tblPriceType"
-    Code     = Column(Integer,     primary_key=True, autoincrement=True)
-    Name     = Column(String(100), nullable=False)
-    IsActive = Column(Boolean,     nullable=False, default=True)
+class Price(Base):
+    __tablename__ = "tblPrice"
+
+    PriceID          = Column(Integer,        primary_key=True, autoincrement=True)
+    BusinessUnitCode = Column(String(10),     nullable=False)
+    CustomerCode     = Column(String(20),     nullable=False)
+    SalesChannelCode = Column(String(15),     nullable=False)
+    ItemNo           = Column(String(20),     nullable=False)
+    PriceMonth       = Column(Date,           nullable=False)
+    Price            = Column(Numeric(18, 4), nullable=False)
+    CreatedBy        = Column(Integer,        nullable=False)
+    CreatedDate      = Column(DATETIME2,      nullable=False)
+    ModifiedBy       = Column(Integer,        nullable=True)
+    ModifiedDate     = Column(DATETIME2,      nullable=True)
 
 
 class Role(Base):
@@ -155,21 +165,21 @@ class UserCustomer(Base):
 
 class ForecastData(Base):
     __tablename__ = "tblForecastData"
-    EntryNo          = Column(Integer,       primary_key=True, autoincrement=True)
-    BusinessUnitCode = Column(String(10),    ForeignKey("tblBusinessUnit.Code"), nullable=False)
-    ForecastTypeCode = Column(Integer,       ForeignKey("tblForecastType.Code"), nullable=False)
-    SalesChannelCode = Column(String(15),    ForeignKey("tblSalesChannel.Code"), nullable=False)
-    CustomerCode     = Column(String(20),    nullable=False)
-    ItemNo           = Column(String(20),    nullable=False)
-    ForecastDate     = Column(Date,          nullable=False)
-    PriceTypeCode    = Column(Integer,       ForeignKey("tblPriceType.Code"), nullable=True)
-    Price            = Column(Numeric(18,4), nullable=False, default=0)
-    Quantity         = Column(Numeric(18,4), nullable=False)
-    Notes            = Column(String(500),   nullable=True)
-    CreatedBy        = Column(Integer,       ForeignKey("tblUser.UserID"), nullable=False)
-    CreatedDate      = Column(DateTime,      nullable=False)
-    ModifiedBy       = Column(Integer,       ForeignKey("tblUser.UserID"), nullable=True)
-    ModifiedDate     = Column(DateTime,      nullable=True)
+    EntryNo          = Column(Integer,        primary_key=True, autoincrement=True)
+    BusinessUnitCode = Column(String(10),     ForeignKey("tblBusinessUnit.Code"), nullable=False)
+    ForecastTypeCode = Column(Integer,        ForeignKey("tblForecastType.Code"), nullable=False)
+    SalesChannelCode = Column(String(15),     ForeignKey("tblSalesChannel.Code"), nullable=False)
+    CustomerCode     = Column(String(20),     nullable=False)
+    ItemNo           = Column(String(20),     nullable=False)
+    ForecastDate     = Column(Date,           nullable=False)
+    OverridePrice    = Column(Numeric(18, 4), nullable=True)
+    IsPriceOverride  = Column(Boolean,        nullable=False, default=False)
+    Quantity         = Column(Numeric(18, 4), nullable=False)
+    Notes            = Column(String(500),    nullable=True)
+    CreatedBy        = Column(Integer,        ForeignKey("tblUser.UserID"), nullable=False)
+    CreatedDate      = Column(DateTime,       nullable=False)
+    ModifiedBy       = Column(Integer,        ForeignKey("tblUser.UserID"), nullable=True)
+    ModifiedDate     = Column(DateTime,       nullable=True)
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -185,7 +195,6 @@ class ForecastData(Base):
     business_unit    = relationship("BusinessUnit")
     forecast_type    = relationship("ForecastType")
     sales_channel    = relationship("SalesChannel")
-    price_type       = relationship("PriceType")
     created_by_user  = relationship("User", foreign_keys=[CreatedBy])
     modified_by_user = relationship("User", foreign_keys=[ModifiedBy])
 

@@ -207,6 +207,15 @@ tr:hover td { background: var(--c-hover-row); }
   background: #fadbd8; color: var(--c-danger); border: 1px solid #f1948a;
   border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
 }
+.success-banner {
+  background: #d4edda; color: #155724; border: 1px solid #c3e6cb;
+  border-radius: var(--radius); padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
+}
+[data-theme="dark"] .success-banner {
+  background: #1a3a24; color: #75b798; border-color: #2d6a4f;
+}
+.editable-cell { cursor: text; }
+.editable-cell:hover { background: rgba(33, 150, 243, 0.08) !important; }
 .loading { padding: 40px; text-align: center; color: var(--c-muted); }
 
 /* AG Grid locked cell override */

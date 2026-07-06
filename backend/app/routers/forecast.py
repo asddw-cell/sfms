@@ -1,16 +1,19 @@
 """
 routers/forecast.py
-Forecast CRUD endpoints. GET enriches rows with ItemDescription from tblItem.
+Forecast CRUD endpoints. GET enriches rows with ItemDescription, BrandName,
+and effective price data (via the pricing service).
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import date, datetime
+from decimal import Decimal
 from app.db import get_db
-from app.models import ForecastData, Item, User, UserBusinessUnit, UserCustomer, Customer, PriceType
+from app.models import ForecastData, Item, User, UserBusinessUnit, UserCustomer, Customer
 from app.schemas import ForecastRowOut, ForecastRowCreate, ForecastRowUpdate, ForecastRowByItemOut
 from app.auth.dev_auth import get_current_user
 from app.services.editability import check_editable
 from app.services.supply_sync import sync_supply_row, delete_supply_row, _get_supply_type_code
+from app.services.pricing import get_effective_prices_bulk, get_effective_price
 
 router = APIRouter(prefix="/api/v1/forecast", tags=["Forecast"])
 
@@ -29,6 +32,14 @@ def _get_sales_type_code(db) -> int:
     if ft:
         _SALES_TYPE_CODE_CACHE = ft.Code
     return _SALES_TYPE_CODE_CACHE
+
+
+def _validate_price_consistency(is_price_override: bool, override_price) -> None:
+    """Enforce: override=True requires a price; override=False requires None."""
+    if is_price_override and override_price is None:
+        raise HTTPException(422, detail="is_price_override=True requires override_price to be set.")
+    if not is_price_override and override_price is not None:
+        raise HTTPException(422, detail="is_price_override=False requires override_price to be null.")
 
 
 @router.get("/{bu_code}", response_model=list[ForecastRowOut])
@@ -75,20 +86,24 @@ def get_forecast(
     item_desc_map  = {}
     item_brand_map = {}
     if item_nos:
-        items = db.query(Item).filter(
-            Item.ItemNo.in_(item_nos),
-        ).all()
-        item_desc_map  = {i.ItemNo: i.Description for i in items}
-        # Fetch brand names for all unique brand codes found on those items
-        brand_codes = list({i.BrandCode for i in items})
+        items = db.query(Item).filter(Item.ItemNo.in_(item_nos)).all()
+        item_desc_map = {i.ItemNo: i.Description for i in items}
+        brand_codes   = list({i.BrandCode for i in items})
         from app.models import Brand
         brands = db.query(Brand).filter(Brand.Code.in_(brand_codes)).all()
         brand_name_map = {b.Code: b.Name for b in brands}
         item_brand_map = {i.ItemNo: brand_name_map.get(i.BrandCode, i.BrandCode) for i in items}
 
+    # Bulk price resolution — single query, not N lookups
+    price_map = get_effective_prices_bulk(rows, db)
+
     for row in rows:
         row.ItemDescription = item_desc_map.get(row.ItemNo, row.ItemNo)
         row.BrandName       = item_brand_map.get(row.ItemNo, '')
+        eff_price, missing  = price_map.get(row.EntryNo, (Decimal("0"), False))
+        row.effective_price  = eff_price
+        row.is_missing_price = missing
+        row.revenue          = (row.Quantity or Decimal("0")) * eff_price
 
     return rows
 
@@ -100,6 +115,7 @@ def create_forecast_row(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _validate_price_consistency(body.is_price_override, body.override_price)
     check_editable(bu_code, body.ForecastDate, body.ForecastTypeCode, current_user, db)
 
     existing = db.query(ForecastData).filter(
@@ -109,7 +125,6 @@ def create_forecast_row(
         ForecastData.CustomerCode     == body.CustomerCode,
         ForecastData.ItemNo           == body.ItemNo,
         ForecastData.ForecastDate     == body.ForecastDate.replace(day=1),
-        ForecastData.PriceTypeCode    == body.PriceTypeCode if body.PriceTypeCode else ForecastData.PriceTypeCode.is_(None),
     ).first()
     if existing:
         raise HTTPException(409, detail="A forecast row with this combination already exists.")
@@ -121,8 +136,8 @@ def create_forecast_row(
         CustomerCode     = body.CustomerCode,
         ItemNo           = body.ItemNo,
         ForecastDate     = body.ForecastDate.replace(day=1),
-        PriceTypeCode    = body.PriceTypeCode,
-        Price            = body.Price,
+        IsPriceOverride  = body.is_price_override,
+        OverridePrice    = body.override_price,
         Quantity         = body.Quantity,
         Notes            = body.Notes,
         CreatedBy        = current_user.UserID,
@@ -143,14 +158,16 @@ def create_forecast_row(
     db.commit()
     db.refresh(row)
 
-    # Enrich the newly created row with its description and brand name
-    item = db.query(Item).filter(
-        Item.ItemNo == row.ItemNo,
-    ).first()
+    # Enrich the newly created row
+    item = db.query(Item).filter(Item.ItemNo == row.ItemNo).first()
     from app.models import Brand
     brand = db.query(Brand).filter(Brand.Code == item.BrandCode).first() if item else None
     row.ItemDescription = item.Description if item else row.ItemNo
     row.BrandName       = brand.Name if brand else ''
+    eff_price, missing  = get_effective_price(row, db)
+    row.effective_price  = eff_price
+    row.is_missing_price = missing
+    row.revenue          = (row.Quantity or Decimal("0")) * eff_price
 
     return row
 
@@ -173,12 +190,21 @@ def update_forecast_row(
     check_editable(bu_code, row.ForecastDate, row.ForecastTypeCode, current_user, db)
 
     row.Quantity     = body.Quantity if body.Quantity is not None else 0
-    if body.Price is not None:
-        row.Price    = body.Price
-    if body.PriceTypeCode is not None:
-        row.PriceTypeCode = body.PriceTypeCode
+
+    if body.is_price_override is not None:
+        new_override = body.override_price if body.is_price_override else None
+        _validate_price_consistency(body.is_price_override, new_override)
+        row.IsPriceOverride = body.is_price_override
+        row.OverridePrice   = new_override
+    elif body.override_price is not None:
+        # Caller supplied a new price without changing the override flag —
+        # treat as override being set
+        row.IsPriceOverride = True
+        row.OverridePrice   = body.override_price
+
     if body.Notes is not None:
-        row.Notes    = body.Notes
+        row.Notes = body.Notes
+
     row.ModifiedBy   = current_user.UserID
     row.ModifiedDate = datetime.utcnow()
 
@@ -194,13 +220,15 @@ def update_forecast_row(
     db.refresh(row)
 
     # Enrich with description and brand name
-    item = db.query(Item).filter(
-        Item.ItemNo == row.ItemNo,
-    ).first()
+    item = db.query(Item).filter(Item.ItemNo == row.ItemNo).first()
     from app.models import Brand
     brand = db.query(Brand).filter(Brand.Code == item.BrandCode).first() if item else None
     row.ItemDescription = item.Description if item else row.ItemNo
     row.BrandName       = brand.Name if brand else ''
+    eff_price, missing  = get_effective_price(row, db)
+    row.effective_price  = eff_price
+    row.is_missing_price = missing
+    row.revenue          = (row.Quantity or Decimal("0")) * eff_price
 
     return row
 
@@ -254,7 +282,6 @@ def get_forecast_by_item(
 
     rows = q.order_by(
         ForecastData.CustomerCode,
-        ForecastData.PriceTypeCode,
         ForecastData.ForecastDate,
     ).all()
 
@@ -269,12 +296,10 @@ def get_forecast_by_item(
     ).all()
     customer_name_map = {c.Code: c.Name for c in customers}
 
-    # Bulk-fetch price type names
-    pt_codes = list({r.PriceTypeCode for r in rows if r.PriceTypeCode is not None})
-    price_types = db.query(PriceType).filter(PriceType.Code.in_(pt_codes)).all() if pt_codes else []
-    pt_name_map = {pt.Code: pt.Name for pt in price_types}
+    # Bulk price resolution
+    price_map = get_effective_prices_bulk(rows, db)
 
-    # Cache editability checks per unique (bu_code, forecast_date, forecast_type_code)
+    # Cache editability checks per unique forecast_date
     editable_cache: dict[tuple, bool] = {}
 
     def _is_editable(fd: date) -> bool:
@@ -285,6 +310,7 @@ def get_forecast_by_item(
 
     result = []
     for row in rows:
+        eff_price, missing = price_map.get(row.EntryNo, (Decimal("0"), False))
         result.append(ForecastRowByItemOut(
             EntryNo          = row.EntryNo,
             BusinessUnitCode = row.BusinessUnitCode,
@@ -294,9 +320,11 @@ def get_forecast_by_item(
             CustomerName     = customer_name_map.get(row.CustomerCode, row.CustomerCode),
             ItemNo           = row.ItemNo,
             ForecastDate     = row.ForecastDate,
-            PriceTypeCode    = row.PriceTypeCode,
-            PriceTypeName    = pt_name_map.get(row.PriceTypeCode) if row.PriceTypeCode is not None else None,
-            Price            = row.Price,
+            OverridePrice    = row.OverridePrice,
+            IsPriceOverride  = row.IsPriceOverride,
+            effective_price  = eff_price,
+            is_missing_price = missing,
+            revenue          = (row.Quantity or Decimal("0")) * eff_price,
             Quantity         = row.Quantity,
             Notes            = row.Notes,
             IsEditable       = _is_editable(row.ForecastDate),
@@ -320,20 +348,17 @@ def delete_forecast_row(
 
     check_editable(bu_code, row.ForecastDate, row.ForecastTypeCode, current_user, db)
 
-    # Delete the matching Supply row if this is a Sales forecast row and
-    # the period is outside the horizon (price-change flow)
+    # Delete the matching Supply row if this is a Sales forecast row
     try:
         sales_type_code = _get_sales_type_code(db)
         if sales_type_code and row.ForecastTypeCode == sales_type_code:
             delete_supply_row(
-                bu_code=bu_code,
-                channel_code=row.SalesChannelCode,
-                customer_code=row.CustomerCode,
-                item_no=row.ItemNo,
-                forecast_date=row.ForecastDate,
-                price_type_code=row.PriceTypeCode,
-                old_price=float(row.Price),
-                db=db,
+                bu_code       = bu_code,
+                channel_code  = row.SalesChannelCode,
+                customer_code = row.CustomerCode,
+                item_no       = row.ItemNo,
+                forecast_date = row.ForecastDate,
+                db            = db,
             )
     except Exception:
         pass
