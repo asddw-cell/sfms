@@ -16,7 +16,7 @@ import 'ag-grid-community/styles/ag-theme-alpine.css'
 
 import {
   fetchBusinessUnits, fetchForecastTypes, fetchSalesChannels,
-  fetchCustomers, fetchBrands, fetchPriceTypes, fetchCurrencies, fetchItems, fetchMe,
+  fetchCustomers, fetchBrands, fetchCurrencies, fetchItems, fetchMe,
   fetchForecast, fetchSupplyForecast, createForecastRow, updateForecastRow, deleteForecastRow, copyForecastToGM,
   fetchComparison, fetchLYActuals, searchItems,
 } from '../../api/sfms'
@@ -261,7 +261,6 @@ export default function ForecastGrid() {
   const [gridError,    setGridError]    = useState('')
   const [supplyHorizon, setSupplyHorizon] = useState(null) // resolved horizon months for current BU+channel
   const [contextMenu,  setContextMenu]  = useState(null) // { x, y, row }
-  const [bulkPrice,    setBulkPrice]    = useState(null) // { row, fromYM, toYM, price, priceTypeCode, saving, error }
   const fileInputRef = useRef()
 
   // ── Reference data ─────────────────────────────────────────────────────────
@@ -278,7 +277,6 @@ export default function ForecastGrid() {
   const { data: chns = [] } = useQuery({ queryKey: ['chns'], queryFn: fetchSalesChannels })
 
 
-  const { data: pts        = [] } = useQuery({ queryKey: ['pts'],        queryFn: fetchPriceTypes })
   const { data: brands     = [] } = useQuery({ queryKey: ['brands'],     queryFn: fetchBrands })
   const { data: currencies = [] } = useQuery({ queryKey: ['currencies'], queryFn: fetchCurrencies })
 
@@ -432,11 +430,13 @@ export default function ForecastGrid() {
       }
       const mk = monthKey(fr.ForecastDate)
       map.get(fr.ItemNo).months[mk] = {
-        entryNo:       fr.EntryNo,
-        priceTypeCode: fr.PriceTypeCode,
-        quantity:      parseFloat(fr.Quantity),
-        price:         parseFloat(fr.Price),
-        notes:         fr.Notes,
+        entryNo:         fr.EntryNo,
+        quantity:        parseFloat(fr.Quantity),
+        effectivePrice:  parseFloat(fr.effective_price ?? 0),
+        isMissingPrice:  fr.is_missing_price ?? false,
+        isPriceOverride: fr.IsPriceOverride ?? false,
+        overridePrice:   fr.OverridePrice != null ? parseFloat(fr.OverridePrice) : null,
+        notes:           fr.Notes,
       }
     }
     return map
@@ -517,11 +517,13 @@ map.get(itemNo).months[mk] = {
       }
       const mk = monthKey(sr.ForecastDate)
       map.get(itemNo).months[mk] = {
-        entryNo:       sr.EntryNo,
-        priceTypeCode: sr.PriceTypeCode,
-        quantity:      parseFloat(sr.Quantity),
-        price:         parseFloat(sr.Price),
-        notes:         sr.Notes,
+        entryNo:         sr.EntryNo,
+        quantity:        parseFloat(sr.Quantity),
+        effectivePrice:  parseFloat(sr.effective_price ?? 0),
+        isMissingPrice:  sr.is_missing_price ?? false,
+        isPriceOverride: sr.IsPriceOverride ?? false,
+        overridePrice:   sr.OverridePrice != null ? parseFloat(sr.OverridePrice) : null,
+        notes:           sr.Notes,
       }
     }
     return map
@@ -644,7 +646,7 @@ map.get(itemNo).months[mk] = {
           const fCell = fRow?.months?.[ym]
           leMonths[ym] = {
             quantity:   fCell?.quantity ?? 0,
-            totalValue: fCell ? (fCell.quantity ?? 0) * (fCell.price ?? 0) : 0,
+            totalValue: fCell ? (fCell.quantity ?? 0) * (fCell.effectivePrice ?? 0) : 0,
             isActuals:  false,
           }
         }
@@ -709,7 +711,7 @@ map.get(itemNo).months[mk] = {
       rowValue: months.reduce((sum, ym) => {
         const cell = row.months?.[ym]
         if (row.rowType === 'A' || row.rowType === 'LE' || row.rowType === 'LY') return sum + (cell?.totalValue ?? 0)
-        return sum + ((cell?.quantity ?? 0) * (cell?.price ?? 0))
+        return sum + ((cell?.quantity ?? 0) * (cell?.effectivePrice ?? 0))
       }, 0),
     }))
 
@@ -748,7 +750,7 @@ map.get(itemNo).months[mk] = {
         const cell = node.data.months?.[ym]
         if (cell?.quantity != null) {
           qty[ym] = (qty[ym] ?? 0) + Number(cell.quantity)
-          val[ym] = (val[ym] ?? 0) + Number(cell.quantity) * Number(cell.price ?? 0)
+          val[ym] = (val[ym] ?? 0) + Number(cell.quantity) * Number(cell.effectivePrice ?? 0)
         }
       }
     })
@@ -879,8 +881,8 @@ map.get(itemNo).months[mk] = {
         }
         const cell = params.data?.months?.[ym]
         if (isLockedMonth(ym, horizonMonthsBack)) return `Period is locked — Qty: ${cell?.quantity ?? '—'}`
-        if (!cell) return 'Click to add quantity  |  Double-click for price & notes'
-        return `Qty: ${cell.quantity}  |  Price: ${currencySymbol}${cell.price}  —  Double-click for details`
+        if (!cell) return 'Click to add quantity  |  Double-click for notes'
+        return `Qty: ${cell.quantity}  |  Price: ${currencySymbol}${cell.effectivePrice ?? 0}${cell.isMissingPrice ? ' ⚠ missing' : ''}  —  Double-click for notes`
       },
     }))
     const totalCol = {
@@ -973,15 +975,14 @@ map.get(itemNo).months[mk] = {
         if (quantity === null || isNaN(quantity)) return
         const useFtCode = isSupplyRow ? supplyFtCode : ftCode
         const created = await createForecastRow(buCode, {
-          ForecastTypeCode: Number(useFtCode),
-          SalesChannelCode: channelCode,
-          CustomerCode:     customerCode,
-          ItemNo:           itemNo,
-          ForecastDate:     firstOfMonth(ym),
-          PriceTypeCode:    pts[0]?.Code ?? null,
-          Price:            0,
-          Quantity:         quantity,
-          Notes:            null,
+          ForecastTypeCode:  Number(useFtCode),
+          SalesChannelCode:  channelCode,
+          CustomerCode:      customerCode,
+          ItemNo:            itemNo,
+          ForecastDate:      firstOfMonth(ym),
+          is_price_override: false,
+          Quantity:          quantity,
+          Notes:             null,
         })
         qc.setQueryData(forecastQKey, old => [...(old ?? []), created])
       }
@@ -1019,8 +1020,9 @@ map.get(itemNo).months[mk] = {
                 ForecastDate:     ym + '-01',
                 SalesChannelCode: channelCode,
                 Quantity:         String(quantity),
-                Price:            String(params.data.months?.[ym]?.price ?? 0),
-                PriceTypeCode:    params.data.months?.[ym]?.priceTypeCode ?? null,
+                IsPriceOverride:  false,
+                effective_price:  0,
+                is_missing_price: false,
                 EntryNo:          null,  // will be resolved on next refetch
                 Notes:            'Auto-synced from Sales forecast',
               }]
@@ -1041,7 +1043,7 @@ map.get(itemNo).months[mk] = {
         qc.invalidateQueries({ queryKey: ['forecast'] })
       }
     }
-  }, [buCode, ftCode, supplyFtCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands, pts, qc, supplyHorizon])
+  }, [buCode, ftCode, supplyFtCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands, qc, supplyHorizon])
 
   // ── Double click → open modal for price / notes ───────────────────────────
   const onCellDoubleClicked = useCallback((params) => {
@@ -1074,11 +1076,12 @@ map.get(itemNo).months[mk] = {
       customerCode,
       customerName:   customer?.Name || customerCode,
       currencySymbol: currencySymbol,
-      entryNo:        cell?.entryNo      ?? null,
-      priceTypeCode:  cell?.priceTypeCode ?? null,
-      quantity:       cell?.quantity     ?? null,
-      price:          cell?.price        ?? null,
-      notes:          cell?.notes        ?? '',
+      entryNo:        cell?.entryNo       ?? null,
+      quantity:       cell?.quantity      ?? null,
+      notes:          cell?.notes         ?? '',
+      isPriceOverride: cell?.isPriceOverride ?? false,
+      overridePrice:  cell?.overridePrice  ?? null,
+      effectivePrice: cell?.effectivePrice ?? 0,
       isSupplyRow,
     })
   }, [customers, customerCode, channelCode, horizonMonthsBack, supplyHorizon, me])
@@ -1227,15 +1230,14 @@ map.get(itemNo).months[mk] = {
               const itemMeta = allItems.find(i => i.ItemNo === itemNo)
               if (!itemMeta) { skipped++; continue }
               await createForecastRow(buCode, {
-                ForecastTypeCode: Number(ftCode),
-                SalesChannelCode: channelCode,
-                CustomerCode:     customerCode,
-                ItemNo:           itemNo,
-                ForecastDate:     firstOfMonth(ym),
-                PriceTypeCode:    pts[0]?.Code ?? null,
-                Price:            0,
-                Quantity:         qty,
-                Notes:            null,
+                ForecastTypeCode:  Number(ftCode),
+                SalesChannelCode:  channelCode,
+                CustomerCode:      customerCode,
+                ItemNo:            itemNo,
+                ForecastDate:      firstOfMonth(ym),
+                is_price_override: false,
+                Quantity:          qty,
+                Notes:             null,
               })
               created++
             }
@@ -1261,77 +1263,8 @@ map.get(itemNo).months[mk] = {
     }
   }
 
-  // ── Bulk price update ────────────────────────────────────────────────────────
-  async function handleBulkPriceUpdate() {
-    if (!bulkPrice) return
-    const { row, fromYM, toYM, price, priceTypeCode: bpPriceType } = bulkPrice
-    const newPrice = parseFloat(price)
-    if (isNaN(newPrice) || newPrice < 0) {
-      setBulkPrice(bp => ({ ...bp, error: 'Please enter a valid price.' }))
-      return
-    }
-    if (!bpPriceType) {
-      setBulkPrice(bp => ({ ...bp, error: 'Please select a Price Type.' }))
-      return
-    }
-    if (!fromYM || !toYM || fromYM > toYM) {
-      setBulkPrice(bp => ({ ...bp, error: 'Please select a valid date range.' }))
-      return
-    }
-
-    setBulkPrice(bp => ({ ...bp, saving: true, error: '' }))
-    setGridError('')
-
-    try {
-      // Find all F row cells for this item within the selected range
-      const fRow = rowDataWithTotals.find(r => r.itemNo === row.itemNo && r.rowType === 'F')
-      if (!fRow) return
-
-      const targetMonths = months.filter(ym => ym >= fromYM && ym <= toYM)
-      let updated = 0, created = 0
-
-      for (const ym of targetMonths) {
-        if (isLockedMonth(ym, horizonMonthsBack)) continue
-        const cell = fRow.months?.[ym]
-
-        if (cell?.entryNo) {
-          // Existing row — simple update (price no longer part of unique key)
-          await updateForecastRow(buCode, cell.entryNo, {
-            Quantity:      cell.quantity ?? 0,
-            Price:         newPrice,
-            PriceTypeCode: Number(bpPriceType),
-            Notes:         null,
-          })
-          updated++
-        } else {
-          // No existing row — create with quantity 0
-          await createForecastRow(buCode, {
-            ForecastTypeCode: Number(ftCode),
-            SalesChannelCode: channelCode,
-            CustomerCode:     customerCode,
-            ItemNo:           row.itemNo,
-            ForecastDate:     firstOfMonth(ym),
-            PriceTypeCode:    Number(bpPriceType),
-            Price:            newPrice,
-            Quantity:         0,
-            Notes:            null,
-          })
-          created++
-        }
-      }
-
-      await qc.invalidateQueries({ queryKey: ['forecast'] })
-      setBulkPrice(null)
-      if (updated + created > 0) {
-        setGridError('')
-      }
-    } catch (err) {
-      setBulkPrice(bp => ({ ...bp, saving: false, error: err.message }))
-    }
-  }
-
   // ── Bulk add items ─────────────────────────────────────────────────────────
-  async function handleBulkAdd({ selectedItems, monthFrom, monthTo, priceTypeCode: modalPriceType }) {
+  async function handleBulkAdd({ selectedItems, monthFrom, monthTo }) {
     setSaving(true)
     setGridError('')
 
@@ -1355,15 +1288,14 @@ map.get(itemNo).months[mk] = {
       for (const ym of targetMonths) {
         try {
           await createForecastRow(buCode, {
-            ForecastTypeCode: Number(ftCode),
-            SalesChannelCode: channelCode,
-            CustomerCode:     customerCode,
-            ItemNo:           item.ItemNo,
-            ForecastDate:     ym + '-01',
-            PriceTypeCode:    Number(modalPriceType),
-            Price:            0,
-            Quantity:         0,
-            Notes:            null,
+            ForecastTypeCode:  Number(ftCode),
+            SalesChannelCode:  channelCode,
+            CustomerCode:      customerCode,
+            ItemNo:            item.ItemNo,
+            ForecastDate:      ym + '-01',
+            is_price_override: false,
+            Quantity:          0,
+            Notes:             null,
           })
         } catch (e) {
           // Skip duplicates (409) silently — row may already exist
@@ -1383,8 +1315,8 @@ map.get(itemNo).months[mk] = {
     }
   }
 
-  // ── Modal save (price / notes update) ─────────────────────────────────────
-  async function handleModalSave({ quantity, price, notes, priceTypeCode: modalPriceType }) {
+  // ── Modal save (quantity / notes update) ─────────────────────────────────
+  async function handleModalSave({ quantity, notes, overridePrice }) {
     setSaving(true)
     setGridError('')
     const isSupplyRow  = modalCell?.isSupplyRow
@@ -1395,25 +1327,24 @@ map.get(itemNo).months[mk] = {
     const useFtCode    = isSupplyRow ? supplyFtCode : ftCode
     try {
       if (modalCell.entryNo) {
-        // Simple update — price and price type are no longer part of the unique key
         const updated = await updateForecastRow(buCode, modalCell.entryNo, {
-          Quantity:      quantity,
-          Price:         price ?? 0,
-          PriceTypeCode: modalPriceType ? Number(modalPriceType) : null,
-          Notes:         notes || null,
+          Quantity:          quantity,
+          is_price_override: true,
+          override_price:    overridePrice,
+          Notes:             notes || null,
         })
         qc.setQueryData(forecastQKey, old => (old ?? []).map(r => r.EntryNo === modalCell.entryNo ? updated : r))
       } else {
         const created = await createForecastRow(buCode, {
-          ForecastTypeCode: Number(useFtCode),
-          SalesChannelCode: channelCode,
-          CustomerCode:     customerCode,
-          ItemNo:           modalCell.itemNo,
-          ForecastDate:     firstOfMonth(modalCell.ym),
-          PriceTypeCode:    modalPriceType ? Number(modalPriceType) : (pts[0]?.Code ?? null),
-          Price:            price ?? 0,
-          Quantity:         quantity,
-          Notes:            notes || null,
+          ForecastTypeCode:  Number(useFtCode),
+          SalesChannelCode:  channelCode,
+          CustomerCode:      customerCode,
+          ItemNo:            modalCell.itemNo,
+          ForecastDate:      firstOfMonth(modalCell.ym),
+          is_price_override: true,
+          override_price:    overridePrice,
+          Quantity:          quantity,
+          Notes:             notes || null,
         })
         qc.setQueryData(forecastQKey, old => [...(old ?? []), created])
       }
@@ -1433,11 +1364,10 @@ map.get(itemNo).months[mk] = {
                    r.ForecastDate?.slice(0, 7) === modalYM &&
                    r.SalesChannelCode   === channelCode
             )
-            const newQty   = String(quantity)
-            const newPrice = String(price ?? 0)
+            const newQty = String(quantity)
             if (existingIdx !== -1) {
               const updated = [...old]
-              updated[existingIdx] = { ...updated[existingIdx], Quantity: newQty, Price: newPrice }
+              updated[existingIdx] = { ...updated[existingIdx], Quantity: newQty }
               return updated
             } else {
               return [...old, {
@@ -1447,8 +1377,9 @@ map.get(itemNo).months[mk] = {
                 ForecastDate:     modalYM + '-01',
                 SalesChannelCode: channelCode,
                 Quantity:         newQty,
-                Price:            newPrice,
-                PriceTypeCode:    modalCell.priceTypeCode ?? null,
+                IsPriceOverride:  false,
+                effective_price:  0,
+                is_missing_price: false,
                 EntryNo:          null,
                 Notes:            'Auto-synced from Sales forecast',
               }]
@@ -1793,7 +1724,6 @@ map.get(itemNo).months[mk] = {
             itemNo={itemNo}
             itemDetails={selectedItemDetails}
             me={me}
-            pts={pts}
             currencySymbol={currencySymbol}
             onError={setItemViewError}
           />
@@ -1836,6 +1766,7 @@ map.get(itemNo).months[mk] = {
                   }
                 }}
                 tooltipShowDelay={600}
+                enableBrowserTooltips
                 defaultColDef={{ resizable: true, sortable: true, filter: false, floatingFilter: false }}
                 rowHeight={28}
                 headerHeight={34}
@@ -1894,103 +1825,6 @@ map.get(itemNo).months[mk] = {
               }}
             >
               {contextMenu.row.itemNo}
-            </div>
-            <div
-              style={{
-                padding: '10px 16px', fontSize: 13, cursor: 'pointer',
-                color: 'var(--c-text)',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = 'var(--c-bg)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              onClick={() => {
-                // Find the current price for this item from first available cell
-                const fRow = rowDataWithTotals.find(r => r.itemNo === contextMenu.row.itemNo && r.rowType === 'F')
-                const firstCell = months.map(ym => fRow?.months?.[ym]).find(c => c?.price != null)
-                const currentPt = firstCell?.priceTypeCode
-                  ? String(firstCell.priceTypeCode)
-                  : String(pts[0]?.Code ?? '')
-                setBulkPrice({
-                  row:          contextMenu.row,
-                  fromYM:       dateFrom,
-                  toYM:         dateTo,
-                  price:        firstCell?.price != null ? String(firstCell.price) : '',
-                  priceTypeCode: currentPt,
-                  saving:       false,
-                  error:        '',
-                })
-                setContextMenu(null)
-              }}
-            >
-              📋 Update price for all months…
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Bulk price modal ── */}
-      {bulkPrice && (
-        <div className="modal-overlay" onClick={() => !bulkPrice.saving && setBulkPrice(null)}>
-          <div className="modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ marginBottom: 4 }}>Update Price</h3>
-            <p style={{ fontSize: 12, color: 'var(--c-muted)', marginBottom: 16 }}>
-              <strong>{bulkPrice.row.itemNo}</strong> — {bulkPrice.row.description}
-            </p>
-
-            {bulkPrice.error && <div className="error-banner" style={{ marginBottom: 12 }}>{bulkPrice.error}</div>}
-
-            <div className="modal-row">
-              <label>Price Type</label>
-              <select
-                value={bulkPrice.priceTypeCode}
-                onChange={e => setBulkPrice(bp => ({ ...bp, priceTypeCode: e.target.value }))}
-                style={{ width: '100%', height: 34 }}
-                disabled={bulkPrice.saving}
-              >
-                <option value="">— Select —</option>
-                {pts.map(pt => <option key={pt.Code} value={pt.Code}>{pt.Name}</option>)}
-              </select>
-            </div>
-
-            <div className="modal-row">
-              <label>New Price ({channelCode === 'FOB' ? 'USD' : (selectedBU?.CurrencyCode || '')})</label>
-              <input
-                type="number" min="0" step="0.0001"
-                value={bulkPrice.price}
-                onChange={e => setBulkPrice(bp => ({ ...bp, price: e.target.value }))}
-                autoFocus
-                disabled={bulkPrice.saving}
-                style={{ width: '100%' }}
-              />
-            </div>
-
-            <div className="modal-row">
-              <label>From month</label>
-              <MonthPicker
-                value={bulkPrice.fromYM}
-                onChange={v => setBulkPrice(bp => ({ ...bp, fromYM: v }))}
-              />
-            </div>
-
-            <div className="modal-row">
-              <label>To month</label>
-              <MonthPicker
-                value={bulkPrice.toYM}
-                onChange={v => setBulkPrice(bp => ({ ...bp, toYM: v }))}
-              />
-            </div>
-
-            <p style={{ fontSize: 11, color: 'var(--c-muted)', marginTop: 8, marginBottom: 16 }}>
-              All forecast rows for this item between the selected months will be updated to the new price.
-              Locked periods are skipped.
-            </p>
-
-            <div className="modal-actions">
-              <button className="btn btn-ghost" onClick={() => setBulkPrice(null)} disabled={bulkPrice.saving}>
-                Cancel
-              </button>
-              <button className="btn btn-primary" onClick={handleBulkPriceUpdate} disabled={bulkPrice.saving}>
-                {bulkPrice.saving ? 'Updating…' : 'Update Price'}
-              </button>
             </div>
           </div>
         </div>
@@ -2063,7 +1897,6 @@ map.get(itemNo).months[mk] = {
         <AddItemsModal
           items={allItems}
           brands={brands}
-          priceTypes={pts}
           months={months}
           existingItemNos={existingItemNos}
           selectedBrands={selectedBrands}
@@ -2095,7 +1928,6 @@ map.get(itemNo).months[mk] = {
           onDelete={handleModalDelete}
           onClose={() => setModalCell(null)}
           saving={saving}
-          priceTypes={pts}
         />
       )}
     </div>
