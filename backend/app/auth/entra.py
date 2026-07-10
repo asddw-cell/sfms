@@ -113,7 +113,7 @@ def get_current_user(
             token,
             signing_key,
             algorithms=["RS256"],
-            audience=settings.entra_client_id,
+            audience=f"api://{settings.entra_client_id}",
             issuer=issuer,
         )
     except ExpiredSignatureError:
