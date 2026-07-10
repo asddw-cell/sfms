@@ -1,4 +1,4 @@
-"""
+﻿"""
 routers/forecast.py
 Forecast CRUD endpoints. GET enriches rows with ItemDescription, BrandName,
 and effective price data (via the pricing service).
@@ -10,7 +10,7 @@ from decimal import Decimal
 from app.db import get_db
 from app.models import ForecastData, Item, User, UserBusinessUnit, UserCustomer, Customer
 from app.schemas import ForecastRowOut, ForecastRowCreate, ForecastRowUpdate, ForecastRowByItemOut
-from app.auth.dev_auth import get_current_user
+from app.auth import get_current_user
 from app.services.editability import check_editable
 from app.services.supply_sync import sync_supply_row, delete_supply_row, _get_supply_type_code
 from app.services.pricing import get_effective_prices_bulk, get_effective_price

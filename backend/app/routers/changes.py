@@ -1,4 +1,4 @@
-"""
+﻿"""
 routers/changes.py
 Change management screen — queries the SQL Server temporal history table
 (tblForecastData_History) to surface both quantity and price changes.
@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from app.db import get_db
 from app.models import User, UserBusinessUnit
-from app.auth.dev_auth import get_current_user
+from app.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1/changes", tags=["Change Management"])
 

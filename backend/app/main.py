@@ -1,4 +1,4 @@
-"""
+﻿"""
 main.py - FastAPI application entry point.
 """
 from fastapi import FastAPI, Depends
@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.auth.dev_auth import get_current_user
+from app.auth import get_current_user
 from app.models import User
 from app.schemas import MeOut
 from app.routers import reference, forecast, actuals, changes, gm_copy, admin, prices

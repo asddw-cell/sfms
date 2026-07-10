@@ -1,4 +1,4 @@
-"""
+﻿"""
 routers/reference.py
 Read-only reference data endpoints consumed by the forecast grid dropdowns.
 tblForecastCycle removed from schema - cycles endpoint removed.
@@ -14,7 +14,7 @@ from app.schemas import (
     BusinessUnitOut, ForecastTypeOut, SalesChannelOut, CustomerOut,
     BrandOut, ItemOut, ItemSearchOut, CurrencyOut, RoleOut
 )
-from app.auth.dev_auth import get_current_user
+from app.auth import get_current_user
 from app.models import User
 
 router = APIRouter(prefix="/api/v1/reference", tags=["Reference Data"])

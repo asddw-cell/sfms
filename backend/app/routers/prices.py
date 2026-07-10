@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.auth.dev_auth import get_current_user
+from app.auth import get_current_user
 from app.db import get_db
 from app.models import Customer, ForecastData, Item, Price, User, UserBusinessUnit, UserCustomer
 from app.schemas import (

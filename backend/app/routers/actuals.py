@@ -1,4 +1,4 @@
-"""
+﻿"""
 routers/actuals.py
 Actuals and comparison view.
 Actuals are stored at invoice-date level and aggregated to month at query time.
@@ -11,7 +11,7 @@ from decimal import Decimal
 from app.db import get_db
 from app.models import Actuals, ForecastData, Item, Customer, UserBusinessUnit, User
 from app.schemas import ActualsRowOut, ComparisonRow, LYActualsRow
-from app.auth.dev_auth import get_current_user
+from app.auth import get_current_user
 
 router = APIRouter(tags=["Actuals & Comparison"])
 

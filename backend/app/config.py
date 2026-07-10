@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     environment: str = "dev"
     allowed_origins: str = "http://localhost:3000"
     dev_user: str = "admin"
+    # Entra ID — required when environment != "dev"; safe to leave blank in dev.
+    entra_tenant_id: str = ""
+    entra_client_id: str = ""
+    entra_authority: str = ""
     supply_horizon_default_months: int = 3
     system_user_id: int = 1
 

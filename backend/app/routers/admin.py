@@ -1,4 +1,4 @@
-"""
+﻿"""
 routers/admin.py
 User management endpoints — Admin only except /users GET which is
 available to all authenticated users (used by DevUserSwitcher in dev).
@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.auth.dev_auth import get_current_user
+from app.auth import get_current_user
 from app.models import User, Role, UserBusinessUnit, UserCustomer, Customer, SupplyHorizon
 from app.schemas import (
     UserOut, UserAdminOut, UserCreateRequest, UserUpdateRequest,

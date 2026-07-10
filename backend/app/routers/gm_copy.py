@@ -1,4 +1,4 @@
-"""
+﻿"""
 routers/gm_copy.py
 Copy Sales forecast to GM forecast for an entire business unit.
 
@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from typing import Optional
 from app.db import get_db
 from app.models import ForecastData, ForecastType, User, UserBusinessUnit
-from app.auth.dev_auth import get_current_user
+from app.auth import get_current_user
 import datetime
 
 router = APIRouter(prefix="/api/v1/gm-copy", tags=["GM Copy"])
