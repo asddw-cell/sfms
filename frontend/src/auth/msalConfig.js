@@ -29,10 +29,8 @@ const _canInit = Boolean(
   import.meta.env.VITE_ENTRA_CLIENT_ID && import.meta.env.VITE_ENTRA_AUTHORITY
 )
 
+// Initialize in the app bootstrap (main.jsx) via msalInstance.initialize(),
+// not here — top-level await is not supported in esbuild's default target.
 export const msalInstance = _canInit
   ? new PublicClientApplication(msalConfig)
   : null
-
-if (msalInstance) {
-  await msalInstance.initialize()
-}
