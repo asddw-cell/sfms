@@ -12,6 +12,7 @@ from app.db import get_db
 from app.models import Actuals, ForecastData, Item, Customer, UserBusinessUnit, User
 from app.schemas import ActualsRowOut, ComparisonRow, LYActualsRow
 from app.auth import get_current_user
+from app.services.pricing import get_effective_price
 
 router = APIRouter(tags=["Actuals & Comparison"])
 
@@ -185,6 +186,15 @@ def get_comparison(
             else None
         )
 
+        if f:
+            resolved_price, is_missing = get_effective_price(f, db)
+            # DECISION: use None when no tblPrice entry exists (is_missing=True),
+            # consistent with ForecastQty/ActualsQty using None for absent data.
+            # Change to Decimal("0") if downstream consumers require a numeric value.
+            forecast_price: Decimal | None = None if is_missing else resolved_price
+        else:
+            forecast_price = None
+
         results.append(ComparisonRow(
             ItemNo           = item_no,
             Description      = item.Description if item else item_no,
@@ -194,7 +204,7 @@ def get_comparison(
             SalesChannelCode = f.SalesChannelCode if f else (a["channelCode"] if a else ""),
             ForecastDate     = period_date,
             ForecastQty      = fqty,
-            ForecastPrice    = Decimal(str(f.Price)) if f else None,
+            ForecastPrice    = forecast_price,
             ActualsQty       = aqty,
             ActualsPrice     = a["price"]       if a else None,
             ActualsTotalValue = a["total_value"] if a else None,
