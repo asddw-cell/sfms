@@ -3,13 +3,15 @@
  *
  * Tests for AuthProvider:
  *  1. dev mode  — renders children directly, no MsalProvider wrapper
- *  2. entra mode, no account — wraps in MsalProvider, calls loginRedirect
+ *  2. entra mode, authenticated — wraps in MsalProvider, renders children
+ *  3. entra mode, no account, inProgress=None — calls loginRedirect, shows placeholder
+ *  4. entra mode, no account, inProgress≠None — does NOT call loginRedirect (interaction in flight)
  */
 import { render, screen, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// ── Module mocks ─────────────────────────────────────────────────────────────
-// These are hoisted before any imports by Vitest's mock-hoisting transform.
+// ── Module mocks ──────────────────────────────────────────────────────────────
+// Hoisted before any imports by Vitest's mock-hoisting transform.
 
 const mockLoginRedirect = vi.fn()
 
@@ -21,15 +23,20 @@ vi.mock('@azure/msal-react', () => ({
   useMsal: vi.fn(),
 }))
 
+vi.mock('@azure/msal-browser', () => ({
+  InteractionStatus: { None: 'none', Login: 'login', HandleRedirect: 'handleRedirect' },
+  PublicClientApplication: vi.fn(),
+}))
+
 vi.mock('../../auth/msalConfig.js', () => ({
-  msalInstance: { /* stub — never actually used in these tests */ },
+  msalInstance: {},
   apiScopes: { scopes: ['api://sfms-api/forecast.readwrite'] },
 }))
 
-// Resolve the mocked hooks lazily so we can change behaviour per test.
 import { useIsAuthenticated, useMsal } from '@azure/msal-react'
+import { InteractionStatus } from '@azure/msal-browser'
 
-// ── Dev mode ─────────────────────────────────────────────────────────────────
+// ── Dev mode ──────────────────────────────────────────────────────────────────
 
 describe('AuthProvider — dev mode (VITE_AUTH_MODE=dev)', () => {
   beforeEach(() => {
@@ -37,10 +44,10 @@ describe('AuthProvider — dev mode (VITE_AUTH_MODE=dev)', () => {
   })
   afterEach(() => {
     vi.unstubAllEnvs()
+    vi.resetModules()
   })
 
   it('renders children directly with no MsalProvider wrapper', async () => {
-    // Re-import after stubbing the env so the component sees the new value.
     vi.resetModules()
     const { default: AuthProvider } = await import('../AuthProvider.jsx')
 
@@ -55,13 +62,11 @@ describe('AuthProvider — dev mode (VITE_AUTH_MODE=dev)', () => {
   })
 })
 
-// ── Entra mode ───────────────────────────────────────────────────────────────
+// ── Entra mode ────────────────────────────────────────────────────────────────
 
 describe('AuthProvider — entra mode (VITE_AUTH_MODE=entra)', () => {
   beforeEach(() => {
     vi.stubEnv('VITE_AUTH_MODE', 'entra')
-    useIsAuthenticated.mockReturnValue(false)
-    useMsal.mockReturnValue({ instance: { loginRedirect: mockLoginRedirect } })
     mockLoginRedirect.mockReset()
     vi.resetModules()
   })
@@ -69,8 +74,9 @@ describe('AuthProvider — entra mode (VITE_AUTH_MODE=entra)', () => {
     vi.unstubAllEnvs()
   })
 
-  it('wraps children in MsalProvider', async () => {
+  it('wraps children in MsalProvider when authenticated', async () => {
     useIsAuthenticated.mockReturnValue(true)
+    useMsal.mockReturnValue({ instance: { loginRedirect: mockLoginRedirect }, inProgress: InteractionStatus.None })
     const { default: AuthProvider } = await import('../AuthProvider.jsx')
 
     render(
@@ -83,8 +89,9 @@ describe('AuthProvider — entra mode (VITE_AUTH_MODE=entra)', () => {
     expect(screen.getByTestId('child')).toBeInTheDocument()
   })
 
-  it('calls loginRedirect when no account is authenticated', async () => {
+  it('calls loginRedirect when unauthenticated and inProgress=None', async () => {
     useIsAuthenticated.mockReturnValue(false)
+    useMsal.mockReturnValue({ instance: { loginRedirect: mockLoginRedirect }, inProgress: InteractionStatus.None })
     const { default: AuthProvider } = await import('../AuthProvider.jsx')
 
     await act(async () => {
@@ -96,9 +103,24 @@ describe('AuthProvider — entra mode (VITE_AUTH_MODE=entra)', () => {
     })
 
     expect(mockLoginRedirect).toHaveBeenCalledOnce()
-    // Children are not rendered while unauthenticated
     expect(screen.queryByTestId('child')).not.toBeInTheDocument()
-    // Placeholder is shown instead
+    expect(screen.getByText('Redirecting to sign-in...')).toBeInTheDocument()
+  })
+
+  it('does NOT call loginRedirect when a redirect is already in flight', async () => {
+    useIsAuthenticated.mockReturnValue(false)
+    useMsal.mockReturnValue({ instance: { loginRedirect: mockLoginRedirect }, inProgress: InteractionStatus.HandleRedirect })
+    const { default: AuthProvider } = await import('../AuthProvider.jsx')
+
+    await act(async () => {
+      render(
+        <AuthProvider>
+          <span data-testid="child">Hello</span>
+        </AuthProvider>
+      )
+    })
+
+    expect(mockLoginRedirect).not.toHaveBeenCalled()
     expect(screen.getByText('Redirecting to sign-in...')).toBeInTheDocument()
   })
 })

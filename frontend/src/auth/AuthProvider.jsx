@@ -6,6 +6,8 @@
  * Switch VITE_AUTH_MODE=entra to enable real Entra ID authentication.
  * Leave at VITE_AUTH_MODE=dev (or unset) for the local-dev no-op path.
  */
+import { useEffect } from 'react'
+import { InteractionStatus } from '@azure/msal-browser'
 import { MsalProvider, useIsAuthenticated, useMsal } from '@azure/msal-react'
 import { msalInstance, apiScopes } from './msalConfig.js'
 
@@ -23,10 +25,17 @@ import { msalInstance, apiScopes } from './msalConfig.js'
  */
 function EntraAuthGate({ children }) {
   const isAuthenticated = useIsAuthenticated()
-  const { instance } = useMsal()
+  const { instance, inProgress } = useMsal()
+
+  // Guard against interaction_in_progress BrowserAuthError: only call
+  // loginRedirect when MSAL has no interaction already in flight.
+  useEffect(() => {
+    if (!isAuthenticated && inProgress === InteractionStatus.None) {
+      instance.loginRedirect(apiScopes)
+    }
+  }, [isAuthenticated, inProgress, instance])
 
   if (!isAuthenticated) {
-    instance.loginRedirect(apiScopes)
     return <div>Redirecting to sign-in...</div>
   }
 
