@@ -153,21 +153,28 @@ def _collapse_ranges(
 
 @router.get("/{bu_code}/template")
 def get_price_template(
-    bu_code: str,
+    bu_code:            str,
+    customer_code:      str | None = Query(default=None),
+    sales_channel_code: str | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Download an Excel template pre-populated with customer × active-item rows."""
+    """
+    Download an Excel template pre-populated with customer × active-item rows.
+
+    Optional filters (each applied independently when provided):
+      customer_code      — restrict to a single customer
+      sales_channel_code — pre-fill the SalesChannelCode column
+    """
     _require_bu_access(bu_code, current_user, db)
 
     try:
         import openpyxl
         from openpyxl.styles import Font
-        from openpyxl.utils import get_column_letter
     except ImportError:
         raise HTTPException(500, detail="openpyxl is not installed on the server.")
 
-    # Fetch accessible customers
+    # Fetch accessible customers, optionally narrowed by customer_code filter
     allowed = _accessible_customers(bu_code, current_user, db)
     q = db.query(Customer).filter(
         Customer.BusinessUnitCode == bu_code,
@@ -175,6 +182,8 @@ def get_price_template(
     )
     if allowed is not None:
         q = q.filter(Customer.Code.in_(allowed))
+    if customer_code:
+        q = q.filter(Customer.Code == customer_code)
     customers = q.order_by(Customer.Name).all()
 
     # Fetch active items for this BU
@@ -185,10 +194,18 @@ def get_price_template(
     ws = wb.active
     ws.title = "Prices"
 
-    headers = ["CustomerCode", "ItemNo", "SalesChannelCode",
-               "StartDate (YYYY-MM-DD e.g. 2026-07-06)",
-               "EndDate (YYYY-MM-DD e.g. 2026-07-06)",
-               "Price"]
+    # CustomerName is added after CustomerCode so both code and name are visible.
+    # The import parser ignores CustomerName (it reads only CustomerCode), so
+    # adding this column does not break round-trip imports.
+    headers = [
+        "CustomerCode",
+        "CustomerName",
+        "ItemNo",
+        "SalesChannelCode",
+        "StartDate (YYYY-MM-DD e.g. 2026-07-06)",
+        "EndDate (YYYY-MM-DD e.g. 2026-07-06)",
+        "Price",
+    ]
     for col_idx, h in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = Font(bold=True)
@@ -196,21 +213,27 @@ def get_price_template(
     # Freeze header row
     ws.freeze_panes = "A2"
 
-    # Date columns (D and E) and ItemNo column (B) formatted as Text to prevent
-    # Excel auto-converting values (dates to serials, ItemNos to numbers)
+    # Text-format columns that Excel might auto-convert:
+    #   C (3) = ItemNo     — prevent trailing-zero stripping
+    #   E (5) = StartDate  — prevent date-serial conversion
+    #   F (6) = EndDate    — prevent date-serial conversion
+    col_map = {"C": 3, "E": 5, "F": 6}
     total_rows = len(customers) * len(items) + 100
-    for col_letter in ("B", "D", "E"):
+    for col_letter, col_num in col_map.items():
         for r in range(2, total_rows + 2):
-            ws.cell(row=r, column={"B": 2, "D": 4, "E": 5}[col_letter]).number_format = "@"
+            ws.cell(row=r, column=col_num).number_format = "@"
 
     row_idx = 2
     for cust in customers:
         for item in items:
             ws.cell(row=row_idx, column=1, value=cust.Code)
-            item_cell = ws.cell(row=row_idx, column=2, value=str(item.ItemNo))
+            ws.cell(row=row_idx, column=2, value=cust.Name)
+            item_cell = ws.cell(row=row_idx, column=3, value=str(item.ItemNo))
             item_cell.number_format = "@"
             item_cell.data_type = "s"
-            # SalesChannelCode left blank — user fills in
+            # Pre-fill SalesChannelCode if the filter is set; otherwise leave blank
+            if sales_channel_code:
+                ws.cell(row=row_idx, column=4, value=sales_channel_code)
             row_idx += 1
 
     buf = io.BytesIO()

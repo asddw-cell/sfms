@@ -82,8 +82,8 @@ export const upsertPrice = (buCode, body) =>
 export const deletePrice = (buCode, priceId) =>
   client.delete(`/prices/${buCode}/${priceId}`)
 
-export const downloadPriceTemplate = (buCode) =>
-  client.get(`/prices/${buCode}/template`, { responseType: 'blob' }).then(r => r.data)
+export const downloadPriceTemplate = (buCode, params = {}) =>
+  client.get(`/prices/${buCode}/template`, { responseType: 'blob', params }).then(r => r.data)
 
 export const importPriceFile = (buCode, file) => {
   const form = new FormData()

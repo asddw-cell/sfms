@@ -48,7 +48,7 @@ function MonthPicker({ value, onChange, label }) {
 }
 
 // ── Add Price Modal ────────────────────────────────────────────────────────────
-function AddPriceModal({ buCode, customers, channels, items, currencySymbol, onSave, onClose, saving }) {
+function AddPriceModal({ buCode, customers, channels, items, onSave, onClose, saving }) {
   const [customerCode,     setCustomerCode]     = useState('')
   const [salesChannelCode, setSalesChannelCode] = useState('')
   const [itemNo,           setItemNo]           = useState('')
@@ -125,7 +125,7 @@ function AddPriceModal({ buCode, customers, channels, items, currencySymbol, onS
         </div>
 
         <div className="modal-row" style={{ marginTop: 12 }}>
-          <label>Price ({currencySymbol})</label>
+          <label>Price</label>
           <input
             type="number"
             min="0"
@@ -332,11 +332,6 @@ export default function PriceMaintenance() {
     enabled:  !!activeBU,
   })
 
-  const currencyCode = useMemo(() => {
-    return bus.find(b => b.Code === activeBU)?.CurrencyCode ?? 'GBP'
-  }, [bus, activeBU])
-  const currencySymbol = currencyCode === 'GBP' ? '£' : currencyCode === 'EUR' ? '€' : currencyCode === 'USD' ? '$' : ''
-
   // ── Price data ────────────────────────────────────────────────────────────
   const priceQueryKey = ['prices', activeBU, selectedCustomer, filterChannel, filterItem]
 
@@ -392,7 +387,7 @@ export default function PriceMaintenance() {
   // ── Grid column definitions ───────────────────────────────────────────────
   const colDefs = useMemo(() => [
     {
-      headerName:  'Channel',
+      headerName:  'Sales Channel',
       field:       'SalesChannelCode',
       width:       100,
       pinned:      'left',
@@ -434,7 +429,7 @@ export default function PriceMaintenance() {
       valueGetter:   p => p.data?.PriceIDs?.length ?? 1,
     },
     {
-      headerName:    `Price (${currencySymbol})`,
+      headerName:    'Price',
       field:         'Price',
       width:         110,
       type:          'numericColumn',
@@ -446,7 +441,7 @@ export default function PriceMaintenance() {
         : null,
       valueFormatter: p => p.value != null
         ? new Intl.NumberFormat('en-GB', {
-            style: 'currency', currency: currencyCode,
+            style: 'decimal',
             minimumFractionDigits: 2, maximumFractionDigits: 2,
           }).format(p.value)
         : '',
@@ -480,7 +475,7 @@ export default function PriceMaintenance() {
         </div>
       ),
     },
-  ], [currencySymbol, currencyCode, canManage, handleDeleteRange, handlePriceCellChanged])
+  ], [canManage, handleDeleteRange, handlePriceCellChanged])
 
   // ── Add Price ─────────────────────────────────────────────────────────────
   async function handleAddSave(body) {
@@ -525,7 +520,10 @@ export default function PriceMaintenance() {
   async function handleTemplateDownload() {
     setError('')
     try {
-      const blob = await downloadPriceTemplate(activeBU)
+      const params = {}
+      if (selectedCustomer) params.customer_code      = selectedCustomer
+      if (filterChannel)    params.sales_channel_code = filterChannel
+      const blob = await downloadPriceTemplate(activeBU, params)
       const url  = URL.createObjectURL(blob)
       const a    = document.createElement('a')
       a.href     = url
@@ -557,7 +555,7 @@ export default function PriceMaintenance() {
       {/* ── Toolbar ── */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
         <div className="field-group">
-          <label>Business Unit</label>
+          <label>Responsibility</label>
           <select value={activeBU} onChange={e => { setSelectedBU(e.target.value); setSelectedCustomer('') }} style={{ minWidth: 140 }}>
             {myBUs.map(b => <option key={b.Code} value={b.Code}>{b.Name ?? b.Code}</option>)}
           </select>
@@ -572,7 +570,7 @@ export default function PriceMaintenance() {
         </div>
 
         <div className="field-group">
-          <label>Channel</label>
+          <label>Sales Channel</label>
           <select value={filterChannel} onChange={e => setFilterChannel(e.target.value)} style={{ minWidth: 120 }}>
             <option value="">All channels</option>
             {channels.map(ch => <option key={ch.Code} value={ch.Code}>{ch.Name ?? ch.Code}</option>)}
@@ -654,7 +652,6 @@ export default function PriceMaintenance() {
           customers={customers}
           channels={channels}
           items={items}
-          currencySymbol={currencySymbol}
           onSave={handleAddSave}
           onClose={() => setShowAdd(false)}
           saving={saving}

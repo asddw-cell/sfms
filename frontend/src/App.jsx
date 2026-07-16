@@ -64,7 +64,7 @@ function Nav() {
       >
         {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
       </button>
-      <DevUserSwitcher />
+      {import.meta.env.VITE_AUTH_MODE === 'dev' && <DevUserSwitcher />}
     </nav>
   )
 }
