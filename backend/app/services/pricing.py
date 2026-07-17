@@ -67,6 +67,33 @@ def _chunked_or_query(db: Session, model, conditions: list, chunk_size: int = 40
     return results
 
 
+# ── Alias resolution ─────────────────────────────────────────────────────────
+
+def _resolve_price_customer(
+    customer_code: str,
+    bu_code: str,
+    db: Session,
+) -> tuple[str, str]:
+    """
+    Return the (CustomerCode, BusinessUnitCode) to use for tblPrice lookup.
+
+    If the customer has a PriceAliasCode set, return the alias target.
+    Otherwise return the original customer unchanged.
+
+    The alias is followed at most one level — no recursive chaining.
+    """
+    from app.models import Customer
+    customer = db.query(Customer).filter(
+        Customer.Code             == customer_code,
+        Customer.BusinessUnitCode == bu_code,
+    ).first()
+
+    if customer and customer.PriceAliasCode and customer.PriceAliasBUCode:
+        return (customer.PriceAliasCode, customer.PriceAliasBUCode)
+
+    return (customer_code, bu_code)
+
+
 # ── Core price resolution ─────────────────────────────────────────────────────
 
 def get_effective_price(row, db: Session) -> tuple[Decimal, bool]:
@@ -80,10 +107,15 @@ def get_effective_price(row, db: Session) -> tuple[Decimal, bool]:
     if row.IsPriceOverride:
         return (row.OverridePrice or Decimal("0"), False)
 
+    # Resolve alias: EU_xx_AMAZ → EU_EU_AMA etc.
+    lookup_customer, lookup_bu = _resolve_price_customer(
+        row.CustomerCode, row.BusinessUnitCode, db
+    )
+
     price_month = row.ForecastDate.replace(day=1)
     p = db.query(Price).filter(
-        Price.BusinessUnitCode == row.BusinessUnitCode,
-        Price.CustomerCode     == row.CustomerCode,
+        Price.BusinessUnitCode == lookup_bu,
+        Price.CustomerCode     == lookup_customer,
         Price.SalesChannelCode == row.SalesChannelCode,
         Price.ItemNo           == row.ItemNo,
         Price.PriceMonth       == price_month,
@@ -113,21 +145,37 @@ def get_effective_prices_bulk(rows, db: Session) -> dict[int, tuple[Decimal, boo
     if not lookup_rows:
         return result
 
-    # Build a set of (BU, Customer, Channel, ItemNo, PriceMonth) tuples to fetch
-    keys = {
-        (
-            r.BusinessUnitCode,
-            r.CustomerCode,
-            r.SalesChannelCode,
-            r.ItemNo,
-            r.ForecastDate.replace(day=1),
+    # Resolve aliases in a single batch customer query
+    unique_customers = {(r.CustomerCode, r.BusinessUnitCode) for r in lookup_rows}
+
+    from app.models import Customer
+    customer_conditions = [
+        and_(
+            Customer.Code             == cust,
+            Customer.BusinessUnitCode == bu,
         )
+        for cust, bu in unique_customers
+    ]
+    customers = _chunked_or_query(db, Customer, customer_conditions)
+
+    alias_map: dict[tuple, tuple] = {}
+    for c in customers:
+        key = (c.Code, c.BusinessUnitCode)
+        if c.PriceAliasCode and c.PriceAliasBUCode:
+            alias_map[key] = (c.PriceAliasCode, c.PriceAliasBUCode)
+        else:
+            alias_map[key] = key
+
+    # Build lookup keys using resolved (customer, bu) pairs
+    keys = {
+        alias_map.get(
+            (r.CustomerCode, r.BusinessUnitCode),
+            (r.CustomerCode, r.BusinessUnitCode),
+        ) + (r.SalesChannelCode, r.ItemNo, r.ForecastDate.replace(day=1))
         for r in lookup_rows
     }
 
     # Single query — pull all matching tblPrice rows at once
-    from sqlalchemy import and_, or_, tuple_ as sa_tuple
-
     # SQL Server supports tuple IN via OR-of-ANDs for composite keys
     conditions = [
         and_(
@@ -148,15 +196,13 @@ def get_effective_prices_bulk(rows, db: Session) -> dict[int, tuple[Decimal, boo
     }
 
     for r in lookup_rows:
-        key = (
-            r.BusinessUnitCode,
-            r.CustomerCode,
-            r.SalesChannelCode,
-            r.ItemNo,
-            r.ForecastDate.replace(day=1),
+        lookup_key = alias_map.get(
+            (r.CustomerCode, r.BusinessUnitCode),
+            (r.CustomerCode, r.BusinessUnitCode),
         )
-        if key in price_map:
-            result[r.EntryNo] = (price_map[key], False)
+        price_key = lookup_key + (r.SalesChannelCode, r.ItemNo, r.ForecastDate.replace(day=1))
+        if price_key in price_map:
+            result[r.EntryNo] = (price_map[price_key], False)
         else:
             result[r.EntryNo] = (Decimal("0"), True)
 

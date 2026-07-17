@@ -332,6 +332,14 @@ export default function PriceMaintenance() {
     enabled:  !!activeBU,
   })
 
+  // ── Alias detection ───────────────────────────────────────────────────────
+  const selectedCustomerObj = customers.find(c => c.Code === selectedCustomer)
+  const isAliasCustomer     = !!(selectedCustomerObj?.PriceAliasCode)
+  const aliasCustomerName   = isAliasCustomer
+    ? (customers.find(c => c.Code === selectedCustomerObj.PriceAliasCode)?.Name
+       ?? selectedCustomerObj.PriceAliasCode)
+    : null
+
   // ── Price data ────────────────────────────────────────────────────────────
   const priceQueryKey = ['prices', activeBU, selectedCustomer, filterChannel, filterItem]
 
@@ -342,7 +350,7 @@ export default function PriceMaintenance() {
       sales_channel_code: filterChannel  || undefined,
       item_no:            filterItem     || undefined,
     }),
-    enabled: !!(activeBU && selectedCustomer),
+    enabled: !!(activeBU && selectedCustomer && !isAliasCustomer),
   })
 
   const canManage = me?.role?.CanManageRefData
@@ -593,7 +601,7 @@ export default function PriceMaintenance() {
         <button
           className="btn btn-ghost"
           onClick={handleTemplateDownload}
-          disabled={!activeBU}
+          disabled={!activeBU || isAliasCustomer}
           title="Download Excel template"
         >
           Template ↓
@@ -601,14 +609,14 @@ export default function PriceMaintenance() {
         <button
           className="btn btn-ghost"
           onClick={() => setShowImport(true)}
-          disabled={!activeBU || !canManage}
+          disabled={!activeBU || !canManage || isAliasCustomer}
         >
           Import
         </button>
         <button
           className="btn btn-primary"
           onClick={() => setShowAdd(true)}
-          disabled={!activeBU || !canManage}
+          disabled={!activeBU || !canManage || isAliasCustomer}
         >
           + Add Range
         </button>
@@ -617,10 +625,27 @@ export default function PriceMaintenance() {
       {error      && <div className="error-banner"   style={{ marginBottom: 10 }}>{error}</div>}
       {successMsg && <div className="success-banner" style={{ marginBottom: 10 }}>{successMsg}</div>}
 
-      {/* ── Grid ── */}
+      {/* ── Grid / alias message ── */}
       {!selectedCustomer ? (
         <div className="text-muted" style={{ fontSize: 13, marginTop: 24, textAlign: 'center' }}>
           Select a customer above to view their price data.
+        </div>
+      ) : isAliasCustomer ? (
+        <div style={{
+          marginTop: 24, padding: '16px 20px',
+          background: 'rgba(59, 130, 246, 0.08)',
+          border: '1px solid rgba(59, 130, 246, 0.25)',
+          borderRadius: 6,
+          fontSize: 13, lineHeight: 1.6,
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+            ℹ Prices for {selectedCustomerObj.Name} are managed under{' '}
+            {aliasCustomerName} ({selectedCustomerObj.PriceAliasCode}).
+          </div>
+          <div>
+            To view or edit prices for this customer, select{' '}
+            {aliasCustomerName} from the Customer dropdown.
+          </div>
         </div>
       ) : (
         <div

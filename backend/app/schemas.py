@@ -39,8 +39,10 @@ class CustomerOut(ORMBase):
     Code: str
     BusinessUnitCode: str
     Name: str
-    CustomerGroup: Optional[str]
+    CustomerGroup:    Optional[str]
     IsActive: bool
+    PriceAliasCode:   Optional[str] = None
+    PriceAliasBUCode: Optional[str] = None
 
 class BrandOut(ORMBase):
     Code: str

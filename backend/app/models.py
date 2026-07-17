@@ -53,6 +53,8 @@ class Customer(Base):
     Name             = Column(String(200), nullable=False)
     CustomerGroup    = Column(String(100), nullable=True)
     IsActive         = Column(Boolean,     nullable=False, default=True)
+    PriceAliasCode   = Column(String(20),  nullable=True)
+    PriceAliasBUCode = Column(String(10),  nullable=True)
 
     business_unit = relationship("BusinessUnit", back_populates="customers")
 
