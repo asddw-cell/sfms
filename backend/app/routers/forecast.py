@@ -14,6 +14,7 @@ from app.auth import get_current_user
 from app.services.editability import check_editable
 from app.services.supply_sync import sync_supply_row, delete_supply_row, _get_supply_type_code
 from app.services.pricing import get_effective_prices_bulk, get_effective_price
+from app.services.channel_norm import build_channel_map, normalize_channel
 
 router = APIRouter(prefix="/api/v1/forecast", tags=["Forecast"])
 
@@ -95,15 +96,17 @@ def get_forecast(
         item_brand_map = {i.ItemNo: brand_name_map.get(i.BrandCode, i.BrandCode) for i in items}
 
     # Bulk price resolution — single query, not N lookups
-    price_map = get_effective_prices_bulk(rows, db)
+    price_map   = get_effective_prices_bulk(rows, db)
+    channel_map = build_channel_map(db)
 
     for row in rows:
-        row.ItemDescription = item_desc_map.get(row.ItemNo, row.ItemNo)
-        row.BrandName       = item_brand_map.get(row.ItemNo, '')
-        eff_price, missing  = price_map.get(row.EntryNo, (Decimal("0"), False))
+        row.ItemDescription  = item_desc_map.get(row.ItemNo, row.ItemNo)
+        row.BrandName        = item_brand_map.get(row.ItemNo, '')
+        eff_price, missing   = price_map.get(row.EntryNo, (Decimal("0"), False))
         row.effective_price  = eff_price
         row.is_missing_price = missing
         row.revenue          = (row.Quantity or Decimal("0")) * eff_price
+        row.SalesChannelCode = normalize_channel(row.SalesChannelCode, channel_map)
 
     return rows
 
@@ -297,7 +300,8 @@ def get_forecast_by_item(
     customer_name_map = {c.Code: c.Name for c in customers}
 
     # Bulk price resolution
-    price_map = get_effective_prices_bulk(rows, db)
+    price_map   = get_effective_prices_bulk(rows, db)
+    channel_map = build_channel_map(db)
 
     # Cache editability checks per unique forecast_date
     editable_cache: dict[tuple, bool] = {}
@@ -315,7 +319,7 @@ def get_forecast_by_item(
             EntryNo          = row.EntryNo,
             BusinessUnitCode = row.BusinessUnitCode,
             ForecastTypeCode = row.ForecastTypeCode,
-            SalesChannelCode = row.SalesChannelCode,
+            SalesChannelCode = normalize_channel(row.SalesChannelCode, channel_map),
             CustomerCode     = row.CustomerCode,
             CustomerName     = customer_name_map.get(row.CustomerCode, row.CustomerCode),
             ItemNo           = row.ItemNo,

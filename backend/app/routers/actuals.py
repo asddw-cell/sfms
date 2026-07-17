@@ -13,6 +13,7 @@ from app.models import Actuals, ForecastData, Item, Customer, UserBusinessUnit, 
 from app.schemas import ActualsRowOut, ComparisonRow, LYActualsRow
 from app.auth import get_current_user
 from app.services.pricing import get_effective_price
+from app.services.channel_norm import build_channel_map, normalize_channel
 
 router = APIRouter(tags=["Actuals & Comparison"])
 
@@ -70,6 +71,8 @@ def get_comparison(
     so multiple invoices and credit notes within a month net off correctly.
     """
     _check_bu_access(bu_code, current_user, db)
+
+    channel_map = build_channel_map(db)
 
     # ── Forecast rows ──────────────────────────────────────────────────────────
     fq = db.query(ForecastData).filter(
@@ -135,18 +138,40 @@ def get_comparison(
         key = (f.ItemNo, f.ForecastDate)
         forecast_map[key] = f
 
-    # Actuals keyed by (ItemNo, ActualsMonth) — aggregated
-    # Raw SQL rows support attribute-style access by column name
+    # Actuals keyed by (ItemNo, ActualsMonth) — aggregated.
+    # Raw SQL rows support attribute-style access by column name.
+    # Invoiced actuals and open-order actuals can coexist in the same month
+    # (e.g. a current month where a partial invoice posted alongside open orders),
+    # and both should contribute to the total actuals figure, not overwrite one another.
     actuals_map: dict[tuple, dict] = {}
     for a in actuals_agg:
-        key = (a.ItemNo, a.ActualsMonth)
-        actuals_map[key] = {
-            "qty":         Decimal(str(a.TotalQty)),
-            "price":       Decimal(str(a.AvgPrice)),
-            "total_value": Decimal(str(a.TotalValue)),
-            "type":        a.ActualsType,
-            "channelCode": a.SalesChannelCode,
-        }
+        key         = (a.ItemNo, a.ActualsMonth)
+        qty         = Decimal(str(a.TotalQty))
+        total_value = Decimal(str(a.TotalValue))
+        norm_channel = normalize_channel(a.SalesChannelCode, channel_map)
+
+        if key not in actuals_map:
+            actuals_map[key] = {
+                "qty":         qty,
+                "total_value": total_value,
+                "types":       {a.ActualsType},
+                "channelCode": norm_channel,
+            }
+        else:
+            existing = actuals_map[key]
+            existing["qty"]         += qty
+            existing["total_value"] += total_value
+            existing["types"].add(a.ActualsType)
+            # channelCode: leave the first-seen value; a genuine cross-channel
+            # collision for this key is a separate pre-existing issue.
+
+    # Derive price as a weighted average, and a display-friendly type label
+    for v in actuals_map.values():
+        v["price"] = (v["total_value"] / v["qty"]) if v["qty"] else Decimal("0")
+        v["type"]  = (
+            next(iter(v["types"])) if len(v["types"]) == 1
+            else "Mixed (" + " + ".join(sorted(v["types"])) + ")"
+        )
 
     # ── Merge keys ─────────────────────────────────────────────────────────────
     all_keys = set(forecast_map.keys()) | set(actuals_map.keys())
@@ -201,7 +226,10 @@ def get_comparison(
             BrandName        = brand_name_map.get(item.BrandCode) if item else None,
             CustomerCode     = customer_code,
             CustomerName     = customer.Name if customer else customer_code,
-            SalesChannelCode = f.SalesChannelCode if f else (a["channelCode"] if a else ""),
+            SalesChannelCode = normalize_channel(
+                f.SalesChannelCode if f else (a["channelCode"] if a else ""),
+                channel_map,
+            ),
             ForecastDate     = period_date,
             ForecastQty      = fqty,
             ForecastPrice    = forecast_price,
@@ -234,6 +262,8 @@ def get_last_year_actuals(
     the frontend maps it forward by 12 months to get the display month key.
     """
     _check_bu_access(bu_code, current_user, db)
+
+    channel_map = build_channel_map(db)
 
     from dateutil.relativedelta import relativedelta
     from sqlalchemy import text as sa_text
@@ -293,7 +323,7 @@ def get_last_year_actuals(
             ItemNo            = row.ItemNo,
             ItemDescription   = item.Description if item else row.ItemNo,
             BrandName         = brand_name_map.get(item.BrandCode) if item else None,
-            SalesChannelCode  = row.SalesChannelCode,
+            SalesChannelCode  = normalize_channel(row.SalesChannelCode, channel_map),
             ActualsDate       = row.ActualsMonth,
             ActualsQty        = Decimal(str(row.TotalQty)),
             ActualsTotalValue = Decimal(str(row.TotalValue)),
