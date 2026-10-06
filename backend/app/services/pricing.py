@@ -13,27 +13,27 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.models import Item, Price
 
-# ── ItemNo helpers ───────────────────────────────────────────────────────────
 
-def _try_pad_item_no(item_no: str) -> str | None:
-    """
-    If item_no is a decimal number with 1 or 2 decimal places, return a
-    zero-padded version to 3 decimal places; otherwise return None.
+# ── Item split / join helpers ─────────────────────────────────────────────────
 
-    Used to recover trailing zeros stripped by Excel (e.g. 869257.010 → 869257.01).
-    None means no padding is applicable or needed.
+def split_item_no(item_no: str) -> tuple[str, str]:
     """
-    if not item_no:
-        return None
-    m = re.match(r'^(\d+)\.(\d{1,2})$', item_no.strip())
-    if m:
-        return f"{m.group(1)}.{m.group(2).ljust(3, '0')}"
-    return None
+    Split a full item number into (BaseItemNo, VariantSuffix).
+
+    Rule: if the string has more than 4 characters and the 4th character
+    from the end is '.', split there.
+      '123456.006' → ('123456', '.006')
+      '123456'     → ('123456', '')
+      '1234'       → ('1234',   '')   ← exactly 4 chars, no split
+    """
+    if len(item_no) > 4 and item_no[-4] == '.':
+        return (item_no[:-4], item_no[-4:])
+    return (item_no, '')
 
 
 # ── Token store ───────────────────────────────────────────────────────────────
@@ -50,8 +50,8 @@ def _chunked_or_query(db: Session, model, conditions: list, chunk_size: int = 40
     Execute a query using OR-of-AND conditions in chunks to stay under
     SQL Server's 2,100 bound-parameter limit.
 
-    Each price condition uses 5 parameters; chunk_size=400 gives 2,000
-    parameters per batch — safely under the limit.
+    Each price condition uses 6 parameters (BU, cust, chan, base, suffix, month);
+    chunk_size=400 gives 2,400 parameters per batch — tweak down if needed.
 
     Returns a flat list of all matched rows across all chunks.
     """
@@ -100,26 +100,43 @@ def get_effective_price(row, db: Session) -> tuple[Decimal, bool]:
     """
     Resolve the effective price for a single forecast row.
 
+    Lookup order:
+      1. IsPriceOverride → OverridePrice
+      2. Exact variant row (BaseItemNo, VariantSuffix)
+      3. Base row (BaseItemNo, VariantSuffix='')
+      4. 0 (is_missing_price=True)
+
     Returns (effective_price, is_missing_price).
-    is_missing_price is True only when IsPriceOverride=0 and no tblPrice row
-    was found — the cell should be shown in amber in the grid.
     """
     if row.IsPriceOverride:
         return (row.OverridePrice or Decimal("0"), False)
 
-    # Resolve alias: EU_xx_AMAZ → EU_EU_AMA etc.
     lookup_customer, lookup_bu = _resolve_price_customer(
         row.CustomerCode, row.BusinessUnitCode, db
     )
 
+    base_item, variant_suffix = split_item_no(row.ItemNo)
     price_month = row.ForecastDate.replace(day=1)
-    p = db.query(Price).filter(
+
+    # Single query fetching at most two candidates (exact variant + base)
+    candidates = db.query(Price).filter(
         Price.BusinessUnitCode == lookup_bu,
         Price.CustomerCode     == lookup_customer,
         Price.SalesChannelCode == row.SalesChannelCode,
-        Price.ItemNo           == row.ItemNo,
+        Price.BaseItemNo       == base_item,
+        Price.VariantSuffix.in_([variant_suffix, '']),
         Price.PriceMonth       == price_month,
-    ).first()
+    ).all()
+
+    # Prefer exact variant over base
+    exact = next((p for p in candidates if p.VariantSuffix == variant_suffix and variant_suffix != ''), None)
+    base  = next((p for p in candidates if p.VariantSuffix == ''), None)
+
+    # For items with no suffix, the base candidate IS the match
+    if not variant_suffix:
+        p = base
+    else:
+        p = exact or base
 
     if p:
         return (p.Price, False)
@@ -130,14 +147,16 @@ def get_effective_prices_bulk(rows, db: Session) -> dict[int, tuple[Decimal, boo
     """
     Batch price resolution for the forecast GET endpoint.
 
-    Fetches all required tblPrice rows in a single query.
+    Uses two set-based queries:
+      - one for base prices  (VariantSuffix = '')
+      - one for exact variant prices
+
     Returns a dict keyed by EntryNo -> (effective_price, is_missing_price).
     """
     result: dict[int, tuple[Decimal, bool]] = {}
 
-    # Rows that already have an override don't need a DB lookup
-    override_rows   = [r for r in rows if r.IsPriceOverride]
-    lookup_rows     = [r for r in rows if not r.IsPriceOverride]
+    override_rows = [r for r in rows if r.IsPriceOverride]
+    lookup_rows   = [r for r in rows if not r.IsPriceOverride]
 
     for r in override_rows:
         result[r.EntryNo] = (r.OverridePrice or Decimal("0"), False)
@@ -166,47 +185,135 @@ def get_effective_prices_bulk(rows, db: Session) -> dict[int, tuple[Decimal, boo
         else:
             alias_map[key] = key
 
-    # Build lookup keys using resolved (customer, bu) pairs
-    keys = {
-        alias_map.get(
-            (r.CustomerCode, r.BusinessUnitCode),
-            (r.CustomerCode, r.BusinessUnitCode),
-        ) + (r.SalesChannelCode, r.ItemNo, r.ForecastDate.replace(day=1))
-        for r in lookup_rows
-    }
+    # Build deduplicated lookup key sets
+    base_keys:    set[tuple] = set()  # (bu, cust, chan, base, month)
+    variant_keys: set[tuple] = set()  # (bu, cust, chan, base, suffix, month)
 
-    # Single query — pull all matching tblPrice rows at once
-    # SQL Server supports tuple IN via OR-of-ANDs for composite keys
-    conditions = [
+    for r in lookup_rows:
+        lookup_bu, lookup_cust = alias_map.get(
+            (r.CustomerCode, r.BusinessUnitCode),
+            (r.CustomerCode, r.BusinessUnitCode),
+        )
+        base_item, variant_suffix = split_item_no(r.ItemNo)
+        month = r.ForecastDate.replace(day=1)
+
+        base_keys.add((lookup_bu, lookup_cust, r.SalesChannelCode, base_item, month))
+        if variant_suffix:
+            variant_keys.add((lookup_bu, lookup_cust, r.SalesChannelCode, base_item, variant_suffix, month))
+
+    # Fetch base prices
+    base_conditions = [
         and_(
             Price.BusinessUnitCode == bu,
             Price.CustomerCode     == cust,
             Price.SalesChannelCode == chan,
-            Price.ItemNo           == item,
+            Price.BaseItemNo       == base,
+            Price.VariantSuffix    == '',
             Price.PriceMonth       == month,
         )
-        for bu, cust, chan, item, month in keys
+        for bu, cust, chan, base, month in base_keys
     ]
-
-    price_rows = _chunked_or_query(db, Price, conditions)
-
-    price_map: dict[tuple, Decimal] = {
-        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.ItemNo, p.PriceMonth): p.Price
-        for p in price_rows
+    base_price_rows = _chunked_or_query(db, Price, base_conditions)
+    base_price_map: dict[tuple, Decimal] = {
+        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.PriceMonth): p.Price
+        for p in base_price_rows
     }
 
+    # Fetch exact variant prices
+    variant_conditions = [
+        and_(
+            Price.BusinessUnitCode == bu,
+            Price.CustomerCode     == cust,
+            Price.SalesChannelCode == chan,
+            Price.BaseItemNo       == base,
+            Price.VariantSuffix    == suffix,
+            Price.PriceMonth       == month,
+        )
+        for bu, cust, chan, base, suffix, month in variant_keys
+    ]
+    variant_price_rows = _chunked_or_query(db, Price, variant_conditions) if variant_conditions else []
+    variant_price_map: dict[tuple, Decimal] = {
+        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p.Price
+        for p in variant_price_rows
+    }
+
+    # Map back, preferring variant over base
     for r in lookup_rows:
-        lookup_key = alias_map.get(
+        lookup_bu, lookup_cust = alias_map.get(
             (r.CustomerCode, r.BusinessUnitCode),
             (r.CustomerCode, r.BusinessUnitCode),
         )
-        price_key = lookup_key + (r.SalesChannelCode, r.ItemNo, r.ForecastDate.replace(day=1))
-        if price_key in price_map:
-            result[r.EntryNo] = (price_map[price_key], False)
+        base_item, variant_suffix = split_item_no(r.ItemNo)
+        month = r.ForecastDate.replace(day=1)
+
+        if variant_suffix:
+            v_key = (lookup_bu, lookup_cust, r.SalesChannelCode, base_item, variant_suffix, month)
+            if v_key in variant_price_map:
+                result[r.EntryNo] = (variant_price_map[v_key], False)
+                continue
+
+        b_key = (lookup_bu, lookup_cust, r.SalesChannelCode, base_item, month)
+        if b_key in base_price_map:
+            result[r.EntryNo] = (base_price_map[b_key], False)
         else:
             result[r.EntryNo] = (Decimal("0"), True)
 
     return result
+
+
+# ── Variant suffix normalisation ──────────────────────────────────────────────
+
+def normalise_variant_suffix(raw: str) -> str | None:
+    """
+    Normalise a raw variant suffix string from user input or a spreadsheet cell.
+
+    Accepts:
+      ''      → ''       (base-level price)
+      '.006'  → '.006'   (dot + 3 chars)
+      '006'   → '.006'   (add leading dot)
+
+    Returns None for any other value (caller should report an error).
+    """
+    raw = raw.strip()
+    if raw == '':
+        return ''
+    if re.match(r'^\.[A-Za-z0-9]{3}$', raw):
+        return raw
+    if re.match(r'^[A-Za-z0-9]{3}$', raw):
+        return '.' + raw
+    return None
+
+
+# ── Item existence validation ─────────────────────────────────────────────────
+
+def _item_exists_for_base(base_item: str, bu_code: str, db: Session) -> bool:
+    """
+    True if tblItem (within bu_code) has either:
+      - an exact row ItemNo = base_item, OR
+      - at least one variant row whose split gives base_item
+        (checked with LEFT/SUBSTRING, not LIKE).
+    """
+    n = len(base_item)
+    return db.query(Item).filter(
+        Item.BusinessUnitCode == bu_code,
+        or_(
+            Item.ItemNo == base_item,
+            and_(
+                func.len(Item.ItemNo) == n + 4,
+                func.left(Item.ItemNo, n) == base_item,
+                func.substring(Item.ItemNo, n + 1, 1) == '.',
+            ),
+        ),
+    ).first() is not None
+
+
+def _item_exists_for_variant(base_item: str, variant_suffix: str, bu_code: str, db: Session) -> bool:
+    """True if tblItem (within bu_code) contains ItemNo = base_item + variant_suffix."""
+    full = base_item + variant_suffix
+    return db.query(Item).filter(
+        Item.ItemNo           == full,
+        Item.BusinessUnitCode == bu_code,
+    ).first() is not None
 
 
 # ── Date helpers ──────────────────────────────────────────────────────────────
@@ -215,10 +322,6 @@ def expand_date_range_to_months(start_date: date, end_date: date) -> list[date]:
     """
     Return first-of-month dates for every calendar month from start_date to
     end_date inclusive.
-
-    Example:
-        expand_date_range_to_months(date(2026,1,15), date(2026,3,20))
-        → [date(2026,1,1), date(2026,2,1), date(2026,3,1)]
     """
     months = []
     y, m = start_date.year, start_date.month
@@ -233,7 +336,7 @@ def expand_date_range_to_months(start_date: date, end_date: date) -> list[date]:
 
 def parse_import_date(value: str, row_number: int) -> date:
     """
-    Parse a date string in YYYY-MM-DD format (e.g. 2026-07-06).
+    Parse a date string in YYYY-MM-DD format.
     Returns a date set to the first of the parsed month (day is ignored).
     Raises ValueError with a user-friendly message on failure.
     """
@@ -258,7 +361,8 @@ def validate_import_rows(
     Validate and expand a list of import dicts.
 
     Each dict should have keys:
-        CustomerCode, SalesChannelCode, ItemNo, StartDate (str), EndDate (str), Price (str/Decimal)
+        CustomerCode, SalesChannelCode, BaseItemNo, VariantSuffix,
+        StartDate (str), EndDate (str), Price (str/Decimal)
 
     Returns:
         {
@@ -284,27 +388,64 @@ def validate_import_rows(
             "import_token":  None,
         }
 
-    valid_rows: list[dict] = []
+    # ── Pre-validate all unique (BaseItemNo, VariantSuffix) pairs in one batch ─
+    # Collect unique pairs that have a non-empty BaseItemNo
+    unique_pairs: set[tuple[str, str]] = set()
+    for row in rows:
+        base   = (row.get("BaseItemNo")    or "").strip()
+        suffix = (row.get("VariantSuffix") or "").strip()
+        if base:
+            unique_pairs.add((base, suffix))
+
+    # Batch check full variant items (suffix != '')
+    full_item_nos   = {base + suffix for base, suffix in unique_pairs if suffix}
+    valid_full_set: set[str] = set()
+    if full_item_nos:
+        found = db.query(Item).filter(
+            Item.ItemNo.in_(full_item_nos),
+            Item.BusinessUnitCode == bu_code,
+        ).all()
+        valid_full_set = {i.ItemNo for i in found}
+
+    # Batch check base items (suffix == '')
+    base_only_items = {base for base, suffix in unique_pairs if not suffix}
+    valid_base_set: set[str] = set()
+    if base_only_items:
+        # Exact matches first
+        exact_found = db.query(Item).filter(
+            Item.ItemNo.in_(base_only_items),
+            Item.BusinessUnitCode == bu_code,
+        ).all()
+        valid_base_set = {i.ItemNo for i in exact_found}
+
+        # For bases not found exactly, check if any variant exists for them
+        missing_bases = base_only_items - valid_base_set
+        for base in missing_bases:
+            if _item_exists_for_base(base, bu_code, db):
+                valid_base_set.add(base)
+
+    valid_rows:  list[dict] = []
     date_errors: list[dict] = []
 
     for i, row in enumerate(rows, start=1):
-        customer_code    = (row.get("CustomerCode")    or "").strip()
-        channel_code     = (row.get("SalesChannelCode") or "").strip()
-        item_no          = (row.get("ItemNo")           or "").strip()
-        start_raw        = (row.get("StartDate")        or "").strip()
-        end_raw          = (row.get("EndDate")          or "").strip()
-        price_val        = row.get("Price")
+        customer_code = (row.get("CustomerCode")    or "").strip()
+        channel_code  = (row.get("SalesChannelCode") or "").strip()
+        base_item     = (row.get("BaseItemNo")       or "").strip()
+        variant_raw   = (row.get("VariantSuffix")    or "").strip()
+        start_raw     = (row.get("StartDate")        or "").strip()
+        end_raw       = (row.get("EndDate")          or "").strip()
+        price_val     = row.get("Price")
 
-        # Skip completely blank rows (unfilled template rows that slipped through)
-        if not any([customer_code, channel_code, item_no, start_raw, end_raw]):
+        # Skip completely blank rows
+        if not any([customer_code, channel_code, base_item, start_raw, end_raw]):
             continue
 
-        # Require all key dimension fields
+        # Required fields
         missing_fields = [
             name for name, val in [
                 ("CustomerCode",     customer_code),
                 ("SalesChannelCode", channel_code),
-                ("ItemNo",           item_no),
+                ("BaseItemNo",       base_item),
             ] if not val
         ]
         if missing_fields:
@@ -315,15 +456,44 @@ def validate_import_rows(
             })
             continue
 
-        # Normalise ItemNo — recover trailing zeros dropped by Excel
-        if _try_pad_item_no(item_no) is not None:
-            exact = db.query(Item).filter(Item.ItemNo == item_no).first()
-            if not exact:
-                padded = _try_pad_item_no(item_no)
-                padded_item = db.query(Item).filter(Item.ItemNo == padded).first()
-                if padded_item:
-                    item_no = padded
+        # Validate VariantSuffix format
+        variant_suffix = normalise_variant_suffix(variant_raw)
+        if variant_suffix is None:
+            date_errors.append({
+                "row":     i,
+                "value":   variant_raw,
+                "message": (
+                    f"Row {i}: Variant '{variant_raw}' is not valid. "
+                    f"Use '' (blank for all variants), '.006', or '006'."
+                ),
+            })
+            continue
 
+        # Validate item existence
+        if variant_suffix:
+            full_item = base_item + variant_suffix
+            if full_item not in valid_full_set:
+                date_errors.append({
+                    "row":     i,
+                    "value":   full_item,
+                    "message": (
+                        f"Row {i}: Item '{full_item}' was not found in this business unit."
+                    ),
+                })
+                continue
+        else:
+            if base_item not in valid_base_set:
+                date_errors.append({
+                    "row":     i,
+                    "value":   base_item,
+                    "message": (
+                        f"Row {i}: Base item '{base_item}' was not found in this business unit "
+                        f"(no exact or variant match)."
+                    ),
+                })
+                continue
+
+        # Parse dates
         start_date = end_date = None
 
         try:
@@ -358,12 +528,12 @@ def validate_import_rows(
                         "BusinessUnitCode": bu_code,
                         "CustomerCode":     customer_code,
                         "SalesChannelCode": channel_code,
-                        "ItemNo":           item_no,
+                        "BaseItemNo":       base_item,
+                        "VariantSuffix":    variant_suffix,
                         "PriceMonth":       month,
                         "Price":            price_decimal,
                     })
 
-    # If there are date errors, stop here — no token
     if date_errors:
         return {
             "valid_rows":    valid_rows,
@@ -372,7 +542,7 @@ def validate_import_rows(
             "import_token":  None,
         }
 
-    # Check for conflicts: existing tblPrice rows with matching keys
+    # Check for conflicts
     conflict_rows: list[dict] = []
     if valid_rows:
         conditions = [
@@ -380,7 +550,8 @@ def validate_import_rows(
                 Price.BusinessUnitCode == r["BusinessUnitCode"],
                 Price.CustomerCode     == r["CustomerCode"],
                 Price.SalesChannelCode == r["SalesChannelCode"],
-                Price.ItemNo           == r["ItemNo"],
+                Price.BaseItemNo       == r["BaseItemNo"],
+                Price.VariantSuffix    == r["VariantSuffix"],
                 Price.PriceMonth       == r["PriceMonth"],
             )
             for r in valid_rows
@@ -388,25 +559,28 @@ def validate_import_rows(
         existing = _chunked_or_query(db, Price, conditions)
 
         existing_keys = {
-            (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.ItemNo, p.PriceMonth): p
+            (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p
             for p in existing
         }
 
         for r in valid_rows:
-            key = (r["BusinessUnitCode"], r["CustomerCode"], r["SalesChannelCode"], r["ItemNo"], r["PriceMonth"])
+            key = (
+                r["BusinessUnitCode"], r["CustomerCode"], r["SalesChannelCode"],
+                r["BaseItemNo"], r["VariantSuffix"], r["PriceMonth"],
+            )
             if key in existing_keys:
                 p = existing_keys[key]
                 conflict_rows.append({
                     "PriceID":         p.PriceID,
                     "CustomerCode":    p.CustomerCode,
                     "SalesChannelCode": p.SalesChannelCode,
-                    "ItemNo":          p.ItemNo,
+                    "BaseItemNo":      p.BaseItemNo,
+                    "VariantSuffix":   p.VariantSuffix,
                     "PriceMonth":      p.PriceMonth.isoformat(),
                     "ExistingPrice":   str(p.Price),
                     "NewPrice":        str(r["Price"]),
                 })
 
-    # No valid rows to import — return without issuing a token
     if not valid_rows:
         return {
             "valid_rows":    [],
@@ -415,7 +589,6 @@ def validate_import_rows(
             "import_token":  None,
         }
 
-    # Issue token (valid for 10 minutes)
     token = str(uuid.uuid4())
     _import_tokens[token] = {
         "valid_rows": valid_rows,

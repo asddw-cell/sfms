@@ -70,17 +70,20 @@ class Brand(Base):
 
 class Item(Base):
     __tablename__ = "tblItem"
-    ItemNo        = Column(String(20),  primary_key=True, nullable=False)
-    BrandCode     = Column(String(25),  ForeignKey("tblBrand.Code"), nullable=False)
-    Description   = Column(String(300), nullable=False)
-    UnitOfMeasure = Column(String(20),  nullable=True)
-    IsActive      = Column(Boolean,     nullable=False, default=True)
+    # tblItem has composite PK (ItemNo, BusinessUnitCode) in the DDL.
+    # Both are mapped here; ORM queries that filter by BU use BusinessUnitCode directly.
+    ItemNo           = Column(String(20),  primary_key=True, nullable=False)
+    BusinessUnitCode = Column(String(10),  primary_key=True, nullable=False)
+    BrandCode        = Column(String(25),  ForeignKey("tblBrand.Code"), nullable=False)
+    Description      = Column(String(300), nullable=False)
+    UnitOfMeasure    = Column(String(20),  nullable=True)
+    IsActive         = Column(Boolean,     nullable=False, default=True)
     # Per-region availability flags — group derived from first 2 chars of BU code
-    IsActive_UK   = Column(Boolean,     nullable=False, default=False)
-    IsActive_EU   = Column(Boolean,     nullable=False, default=False)
-    IsActive_US   = Column(Boolean,     nullable=False, default=False)
-    IsActive_AU   = Column(Boolean,     nullable=False, default=False)
-    IsActive_MX   = Column(Boolean,     nullable=False, default=False)
+    IsActive_UK      = Column(Boolean,     nullable=False, default=False)
+    IsActive_EU      = Column(Boolean,     nullable=False, default=False)
+    IsActive_US      = Column(Boolean,     nullable=False, default=False)
+    IsActive_AU      = Column(Boolean,     nullable=False, default=False)
+    IsActive_MX      = Column(Boolean,     nullable=False, default=False)
 
     brand = relationship("Brand", back_populates="items")
 
@@ -92,7 +95,8 @@ class Price(Base):
     BusinessUnitCode = Column(String(10),     nullable=False)
     CustomerCode     = Column(String(20),     nullable=False)
     SalesChannelCode = Column(String(15),     nullable=False)
-    ItemNo           = Column(String(20),     nullable=False)
+    BaseItemNo       = Column(String(20),     nullable=False)
+    VariantSuffix    = Column(String(4),      nullable=False, server_default='')
     PriceMonth       = Column(Date,           nullable=False)
     Price            = Column(Numeric(18, 4), nullable=False)
     CreatedBy        = Column(Integer,        nullable=False)

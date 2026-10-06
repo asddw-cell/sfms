@@ -26,13 +26,15 @@ from app.schemas import (
 from app.services.pricing import (
     consume_import_token,
     expand_date_range_to_months,
+    normalise_variant_suffix,
     parse_import_date,
+    split_item_no,
     validate_import_rows,
 )
 
 router = APIRouter(prefix="/api/v1/prices", tags=["Prices"])
 
-# ── Region → IsActive column helper (mirrors reference.py) ───────────────────
+# ── Region → IsActive column helper ──────────────────────────────────────────
 
 _REGION_ACTIVE_ATTR = {
     "UK": "IsActive_UK",
@@ -59,10 +61,6 @@ def _require_bu_access(bu_code: str, current_user: User, db: Session) -> None:
 
 
 def _accessible_customers(bu_code: str, current_user: User, db: Session) -> list[str] | None:
-    """
-    Return list of accessible customer codes for this user/BU.
-    Returns None if unrestricted (CanViewAllBU or no UserCustomer rows).
-    """
     if current_user.role.CanViewAllBU:
         return None
     rows = db.query(UserCustomer).filter(
@@ -74,6 +72,25 @@ def _accessible_customers(bu_code: str, current_user: User, db: Session) -> list
     return [r.CustomerCode for r in rows]
 
 
+# ── Item description helper ───────────────────────────────────────────────────
+
+def _build_item_desc_map(rows: list[Price], db: Session) -> dict[str, str]:
+    """
+    Build a {full_item_no: description} map for the given price rows.
+    For variant rows the full item is BaseItemNo + VariantSuffix.
+    For base rows (VariantSuffix='') the full item equals BaseItemNo.
+    Falls back to the BaseItemNo string when no tblItem row is found.
+    """
+    full_items = {r.BaseItemNo + r.VariantSuffix for r in rows}
+    items      = db.query(Item).filter(Item.ItemNo.in_(full_items)).all() if full_items else []
+    return {i.ItemNo: i.Description for i in items}
+
+
+def _item_desc(base: str, suffix: str, desc_map: dict[str, str]) -> str:
+    full = base + suffix
+    return desc_map.get(full, desc_map.get(base, base))
+
+
 # ── Collapse helper ───────────────────────────────────────────────────────────
 
 def _collapse_ranges(
@@ -82,21 +99,20 @@ def _collapse_ranges(
     item_desc_map: dict[str, str],
 ) -> list[PriceRangeResponse]:
     """
-    Group consecutive monthly rows with the same (Customer, Channel, Item, Price)
+    Group consecutive monthly rows with the same (Customer, Channel, BaseItemNo, VariantSuffix, Price)
     into collapsed PriceRangeResponse objects. A gap of even one month breaks a range.
     """
     if not price_rows:
         return []
 
-    # Sort by (Customer, Channel, Item, PriceMonth)
     sorted_rows = sorted(
         price_rows,
-        key=lambda p: (p.CustomerCode, p.SalesChannelCode, p.ItemNo, p.PriceMonth),
+        key=lambda p: (p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth),
     )
 
     ranges: list[PriceRangeResponse] = []
     first = sorted_rows[0]
-    run_key   = (first.CustomerCode, first.SalesChannelCode, first.ItemNo, first.Price)
+    run_key   = (first.CustomerCode, first.SalesChannelCode, first.BaseItemNo, first.VariantSuffix, first.Price)
     run_start = first.PriceMonth
     run_end   = first.PriceMonth
     run_id    = first.PriceID
@@ -109,20 +125,21 @@ def _collapse_ranges(
         return date(y, m, 1)
 
     for row in sorted_rows[1:]:
-        key = (row.CustomerCode, row.SalesChannelCode, row.ItemNo, row.Price)
+        key = (row.CustomerCode, row.SalesChannelCode, row.BaseItemNo, row.VariantSuffix, row.Price)
         if key == run_key and row.PriceMonth == _next_month(run_end):
             run_end = row.PriceMonth
             run_ids.append(row.PriceID)
         else:
-            cust, chan, item, price = run_key
+            cust, chan, base, suffix, price = run_key
             ranges.append(PriceRangeResponse(
                 PriceID_first    = run_id,
                 PriceIDs         = run_ids,
                 CustomerCode     = cust,
                 CustomerName     = customer_name_map.get(cust, cust),
                 SalesChannelCode = chan,
-                ItemNo           = item,
-                ItemDescription  = item_desc_map.get(item, item),
+                BaseItemNo       = base,
+                VariantSuffix    = suffix,
+                ItemDescription  = _item_desc(base, suffix, item_desc_map),
                 StartDate        = run_start,
                 EndDate          = run_end,
                 Price            = price,
@@ -133,15 +150,16 @@ def _collapse_ranges(
             run_id    = row.PriceID
             run_ids   = [row.PriceID]
 
-    cust, chan, item, price = run_key
+    cust, chan, base, suffix, price = run_key
     ranges.append(PriceRangeResponse(
         PriceID_first    = run_id,
         PriceIDs         = run_ids,
         CustomerCode     = cust,
         CustomerName     = customer_name_map.get(cust, cust),
         SalesChannelCode = chan,
-        ItemNo           = item,
-        ItemDescription  = item_desc_map.get(item, item),
+        BaseItemNo       = base,
+        VariantSuffix    = suffix,
+        ItemDescription  = _item_desc(base, suffix, item_desc_map),
         StartDate        = run_start,
         EndDate          = run_end,
         Price            = price,
@@ -149,7 +167,7 @@ def _collapse_ranges(
     return ranges
 
 
-# ── GET /api/v1/prices/{bu_code} ─────────────────────────────────────────────
+# ── GET /api/v1/prices/{bu_code}/template ────────────────────────────────────
 
 @router.get("/{bu_code}/template")
 def get_price_template(
@@ -161,10 +179,7 @@ def get_price_template(
 ):
     """
     Download an Excel template pre-populated with customer × active-item rows.
-
-    Optional filters (each applied independently when provided):
-      customer_code      — restrict to a single customer
-      sales_channel_code — pre-fill the SalesChannelCode column
+    Each tblItem row is split into Base Item and Variant columns.
     """
     _require_bu_access(bu_code, current_user, db)
 
@@ -174,7 +189,6 @@ def get_price_template(
     except ImportError:
         raise HTTPException(500, detail="openpyxl is not installed on the server.")
 
-    # Fetch accessible customers, optionally narrowed by customer_code filter
     allowed = _accessible_customers(bu_code, current_user, db)
     q = db.query(Customer).filter(
         Customer.BusinessUnitCode == bu_code,
@@ -186,7 +200,6 @@ def get_price_template(
         q = q.filter(Customer.Code == customer_code)
     customers = q.order_by(Customer.Name).all()
 
-    # Fetch active items for this BU
     region_col = _region_active_column(bu_code)
     items = db.query(Item).filter(region_col == True).order_by(Item.Description).all()
 
@@ -194,13 +207,11 @@ def get_price_template(
     ws = wb.active
     ws.title = "Prices"
 
-    # CustomerName is added after CustomerCode so both code and name are visible.
-    # The import parser ignores CustomerName (it reads only CustomerCode), so
-    # adding this column does not break round-trip imports.
     headers = [
         "CustomerCode",
         "CustomerName",
-        "ItemNo",
+        "Base Item",
+        "Variant",
         "SalesChannelCode",
         "StartDate (YYYY-MM-DD e.g. 2026-07-06)",
         "EndDate (YYYY-MM-DD e.g. 2026-07-06)",
@@ -210,30 +221,35 @@ def get_price_template(
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = Font(bold=True)
 
-    # Freeze header row
     ws.freeze_panes = "A2"
 
     # Text-format columns that Excel might auto-convert:
-    #   C (3) = ItemNo     — prevent trailing-zero stripping
-    #   E (5) = StartDate  — prevent date-serial conversion
-    #   F (6) = EndDate    — prevent date-serial conversion
-    col_map = {"C": 3, "E": 5, "F": 6}
+    #   C (3) = Base Item  — prevent numeric conversion of item codes
+    #   D (4) = Variant    — prevent .006 → 0.006 conversion
+    #   F (6) = StartDate  — prevent date-serial conversion
+    #   G (7) = EndDate    — prevent date-serial conversion
     total_rows = len(customers) * len(items) + 100
-    for col_letter, col_num in col_map.items():
+    for col_num in (3, 4, 6, 7):
         for r in range(2, total_rows + 2):
             ws.cell(row=r, column=col_num).number_format = "@"
 
     row_idx = 2
     for cust in customers:
         for item in items:
+            base_item, variant_suffix = split_item_no(item.ItemNo)
             ws.cell(row=row_idx, column=1, value=cust.Code)
             ws.cell(row=row_idx, column=2, value=cust.Name)
-            item_cell = ws.cell(row=row_idx, column=3, value=str(item.ItemNo))
-            item_cell.number_format = "@"
-            item_cell.data_type = "s"
-            # Pre-fill SalesChannelCode if the filter is set; otherwise leave blank
+
+            base_cell = ws.cell(row=row_idx, column=3, value=str(base_item))
+            base_cell.number_format = "@"
+            base_cell.data_type = "s"
+
+            variant_cell = ws.cell(row=row_idx, column=4, value=str(variant_suffix))
+            variant_cell.number_format = "@"
+            variant_cell.data_type = "s"
+
             if sales_channel_code:
-                ws.cell(row=row_idx, column=4, value=sales_channel_code)
+                ws.cell(row=row_idx, column=5, value=sales_channel_code)
             row_idx += 1
 
     buf = io.BytesIO()
@@ -246,6 +262,8 @@ def get_price_template(
         headers={"Content-Disposition": f'attachment; filename="price_template_{bu_code}.xlsx"'},
     )
 
+
+# ── GET /api/v1/prices/{bu_code} ─────────────────────────────────────────────
 
 @router.get("/{bu_code}", response_model=list[PriceRangeResponse])
 def get_prices(
@@ -266,8 +284,14 @@ def get_prices(
     )
     if sales_channel_code:
         q = q.filter(Price.SalesChannelCode == sales_channel_code)
+
+    # item_no filter: split the supplied value to match against BaseItemNo/VariantSuffix
     if item_no:
-        q = q.filter(Price.ItemNo == item_no)
+        base_filter, suffix_filter = split_item_no(item_no)
+        if suffix_filter:
+            q = q.filter(Price.BaseItemNo == base_filter, Price.VariantSuffix == suffix_filter)
+        else:
+            q = q.filter(Price.BaseItemNo == base_filter)
 
     if start_date:
         try:
@@ -282,12 +306,12 @@ def get_prices(
         except ValueError:
             pass
 
-    rows = q.order_by(Price.CustomerCode, Price.SalesChannelCode, Price.ItemNo, Price.PriceMonth).all()
+    rows = q.order_by(
+        Price.CustomerCode, Price.SalesChannelCode,
+        Price.BaseItemNo, Price.VariantSuffix, Price.PriceMonth,
+    ).all()
 
-    # Bulk-fetch lookup data
-    item_nos = list({r.ItemNo for r in rows})
-    items    = db.query(Item).filter(Item.ItemNo.in_(item_nos)).all() if item_nos else []
-    item_desc_map = {i.ItemNo: i.Description for i in items}
+    item_desc_map = _build_item_desc_map(rows, db)
 
     customer_name_map = {customer_code: customer_code}
     cust = db.query(Customer).filter(
@@ -315,7 +339,8 @@ def upsert_price(
         [{
             "CustomerCode":     body.CustomerCode,
             "SalesChannelCode": body.SalesChannelCode,
-            "ItemNo":           body.ItemNo,
+            "BaseItemNo":       body.BaseItemNo,
+            "VariantSuffix":    body.VariantSuffix,
             "StartDate":        body.StartDate,
             "EndDate":          body.EndDate,
             "Price":            str(body.Price),
@@ -328,11 +353,9 @@ def upsert_price(
         raise HTTPException(422, detail=result["date_errors"])
 
     if not result["conflict_rows"]:
-        # No conflicts — write immediately
         inserted = _commit_rows(result["valid_rows"], "overwrite", current_user, db)
         return {"inserted": inserted, "updated": 0, "skipped": 0}
 
-    # Return conflict report with token for caller to confirm
     return {
         "valid_rows":    len(result["valid_rows"]),
         "date_errors":   [],
@@ -394,9 +417,7 @@ def update_price_range(
         row.ModifiedDate = now
     db.commit()
 
-    item_nos = list({r.ItemNo for r in rows})
-    items    = db.query(Item).filter(Item.ItemNo.in_(item_nos)).all() if item_nos else []
-    item_desc_map = {i.ItemNo: i.Description for i in items}
+    item_desc_map = _build_item_desc_map(rows, db)
 
     cust_codes = list({r.CustomerCode for r in rows})
     custs      = db.query(Customer).filter(
@@ -439,9 +460,7 @@ async def import_prices(
     header_row = None
 
     def _cell_to_str(c) -> str:
-        """Convert any openpyxl cell value to a clean string.
-        Handles datetime objects returned when Excel auto-converts YYYY-MM-DD
-        strings to date serials, even in Text-formatted columns."""
+        """Convert any openpyxl cell value to a clean string."""
         if c is None:
             return ""
         if isinstance(c, (datetime, date)):
@@ -450,28 +469,72 @@ async def import_prices(
 
     for row in ws.iter_rows(values_only=True):
         if header_row is None:
-            # First non-empty row is the header
             header_row = [_cell_to_str(c) for c in row]
             continue
         if all(c is None for c in row):
             continue
-        row_dict = dict(zip(header_row, [_cell_to_str(c) for c in row]))
-        # Skip template rows where Price has not been filled in
+
+        # Keep raw values for numeric-type detection on Base Item and Variant
+        raw_values = list(row)
+        row_dict   = dict(zip(header_row, [_cell_to_str(c) for c in raw_values]))
+
         if not row_dict.get("Price", "").strip():
             continue
-        # Normalise column names — accept both exact and shortened header forms
+
+        # Locate the Base Item and Variant column indices
+        try:
+            base_col_idx    = header_row.index("Base Item")
+            variant_col_idx = header_row.index("Variant")
+        except ValueError:
+            base_col_idx    = None
+            variant_col_idx = None
+
+        # Reject rows where Base Item or Variant arrived as a numeric type
+        numeric_type_error = False
+        if base_col_idx is not None and isinstance(raw_values[base_col_idx], (int, float)):
+            numeric_type_error = True
+        if variant_col_idx is not None and isinstance(raw_values[variant_col_idx], (int, float)):
+            numeric_type_error = True
+
         rows.append({
             "CustomerCode":     row_dict.get("CustomerCode", ""),
             "SalesChannelCode": row_dict.get("SalesChannelCode", ""),
-            "ItemNo":           row_dict.get("ItemNo", ""),
+            "BaseItemNo":       row_dict.get("Base Item", ""),
+            "VariantSuffix":    row_dict.get("Variant", ""),
             "StartDate":        row_dict.get("StartDate (YYYY-MM-DD e.g. 2026-07-06)",
                                              row_dict.get("StartDate", "")),
             "EndDate":          row_dict.get("EndDate (YYYY-MM-DD e.g. 2026-07-06)",
                                              row_dict.get("EndDate", "")),
             "Price":            row_dict.get("Price", ""),
+            "_numeric_type_error": numeric_type_error,
         })
 
-    result = validate_import_rows(rows, bu_code, db)
+    # Convert numeric-type errors into date_errors before passing to validate_import_rows
+    clean_rows:  list[dict] = []
+    early_errors: list[dict] = []
+    for i, r in enumerate(rows, start=2):  # row 1 is header → data starts at 2
+        if r.pop("_numeric_type_error", False):
+            early_errors.append({
+                "row":     i,
+                "value":   "",
+                "message": (
+                    f"Row {i}: Base Item and Variant must be formatted as Text in Excel. "
+                    f"Excel has converted one of those cells to a number. "
+                    f"Re-format the columns as Text and re-enter the values."
+                ),
+            })
+        else:
+            clean_rows.append(r)
+
+    if early_errors:
+        return ImportValidationResponse(
+            valid_rows    = 0,
+            date_errors   = early_errors,
+            conflict_rows = [],
+            import_token  = None,
+        )
+
+    result = validate_import_rows(clean_rows, bu_code, db)
 
     return ImportValidationResponse(
         valid_rows    = len(result["valid_rows"]),
@@ -500,14 +563,6 @@ def confirm_import(
 
     valid_rows = payload["valid_rows"]
     inserted   = _commit_rows(valid_rows, body.conflict_resolution, current_user, db)
-    updated    = 0
-    skipped    = 0
-
-    if body.conflict_resolution == "overwrite":
-        # _commit_rows returns a combined count; split isn't tracked separately
-        # but semantics: existing rows that were replaced count as updated
-        # We re-query to distinguish — simpler: track in _commit_rows
-        pass
 
     return ImportConfirmResponse(inserted=inserted, updated=0, skipped=0)
 
@@ -522,36 +577,38 @@ def _commit_rows(
 ) -> int:
     """
     Write valid_rows to tblPrice within a single transaction.
-    Returns the count of rows inserted (overwritten rows are also counted).
-    conflict_resolution: "overwrite" | "skip"
+    Returns the count of rows inserted or overwritten.
     """
     from sqlalchemy import and_, or_
 
     if not valid_rows:
         return 0
 
-    # Fetch all conflicting rows in one query
     conditions = [
         and_(
             Price.BusinessUnitCode == r["BusinessUnitCode"],
             Price.CustomerCode     == r["CustomerCode"],
             Price.SalesChannelCode == r["SalesChannelCode"],
-            Price.ItemNo           == r["ItemNo"],
+            Price.BaseItemNo       == r["BaseItemNo"],
+            Price.VariantSuffix    == r["VariantSuffix"],
             Price.PriceMonth       == r["PriceMonth"],
         )
         for r in valid_rows
     ]
     existing = db.query(Price).filter(or_(*conditions)).all() if conditions else []
     existing_map = {
-        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.ItemNo, p.PriceMonth): p
+        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p
         for p in existing
     }
 
-    now = datetime.utcnow()
+    now   = datetime.utcnow()
     count = 0
 
     for r in valid_rows:
-        key = (r["BusinessUnitCode"], r["CustomerCode"], r["SalesChannelCode"], r["ItemNo"], r["PriceMonth"])
+        key = (
+            r["BusinessUnitCode"], r["CustomerCode"], r["SalesChannelCode"],
+            r["BaseItemNo"], r["VariantSuffix"], r["PriceMonth"],
+        )
         existing_row = existing_map.get(key)
 
         if existing_row:
@@ -560,13 +617,13 @@ def _commit_rows(
                 existing_row.ModifiedBy   = current_user.UserID
                 existing_row.ModifiedDate = now
                 count += 1
-            # skip → do nothing
         else:
             db.add(Price(
                 BusinessUnitCode = r["BusinessUnitCode"],
                 CustomerCode     = r["CustomerCode"],
                 SalesChannelCode = r["SalesChannelCode"],
-                ItemNo           = r["ItemNo"],
+                BaseItemNo       = r["BaseItemNo"],
+                VariantSuffix    = r["VariantSuffix"],
                 PriceMonth       = r["PriceMonth"],
                 Price            = r["Price"],
                 CreatedBy        = current_user.UserID,

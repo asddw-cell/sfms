@@ -2,8 +2,8 @@
  * PriceMaintenance.jsx
  *
  * Price management screen: view, add, delete and import pricing data per customer.
- * Prices are stored as monthly rows in tblPrice; the API returns them collapsed into
- * contiguous date ranges with the same price.
+ * Prices are stored as monthly rows in tblPrice (keyed by BaseItemNo + VariantSuffix);
+ * the API returns them collapsed into contiguous date ranges with the same price.
  *
  * Route: /prices
  * Min role: CanManageRefData
@@ -23,7 +23,6 @@ import { useTheme } from '../../ThemeContext'
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 function ymToApiDate(ym) {
-  // Convert YYYY-MM picker value to YYYY-MM-DD (ISO 8601) for the API
   return `${ym}-01`
 }
 
@@ -31,6 +30,30 @@ function formatMonthDisplay(isoDate) {
   if (!isoDate) return ''
   const [y, m] = isoDate.split('-')
   return `${MONTH_ABBR[Number(m) - 1]} ${y}`
+}
+
+/**
+ * Split a full item number into [baseItemNo, variantSuffix].
+ * Mirrors the Python split_item_no() rule: if the string is longer than 4 chars
+ * and the 4th character from the end is '.', split there.
+ */
+function splitItemNo(itemNo) {
+  if (itemNo && itemNo.length > 4 && itemNo[itemNo.length - 4] === '.') {
+    return [itemNo.slice(0, -4), itemNo.slice(-4)]
+  }
+  return [itemNo || '', '']
+}
+
+/**
+ * Normalise a variant suffix string for the API.
+ * '' → ''  |  '.006' → '.006'  |  '006' → '.006'  |  anything else → null (invalid)
+ */
+function normaliseVariant(raw) {
+  const s = (raw || '').trim()
+  if (s === '') return ''
+  if (/^\.[A-Za-z0-9]{3}$/.test(s)) return s
+  if (/^[A-Za-z0-9]{3}$/.test(s)) return '.' + s
+  return null
 }
 
 function MonthPicker({ value, onChange, label }) {
@@ -51,27 +74,50 @@ function MonthPicker({ value, onChange, label }) {
 function AddPriceModal({ buCode, customers, channels, items, onSave, onClose, saving }) {
   const [customerCode,     setCustomerCode]     = useState('')
   const [salesChannelCode, setSalesChannelCode] = useState('')
-  const [itemNo,           setItemNo]           = useState('')
+  const [baseItemNo,       setBaseItemNo]       = useState('')
+  const [variantInput,     setVariantInput]     = useState('')
   const [startMonth,       setStartMonth]       = useState('')
   const [endMonth,         setEndMonth]         = useState('')
   const [price,            setPrice]            = useState('')
   const [error,            setError]            = useState('')
 
+  // Compute unique base items from the loaded items list
+  const baseItems = useMemo(() => {
+    const seen = new Set()
+    const out  = []
+    for (const item of items) {
+      const [base] = splitItemNo(item.ItemNo)
+      if (!seen.has(base)) {
+        seen.add(base)
+        out.push({ base, description: item.Description })
+      }
+    }
+    return out
+  }, [items])
+
   async function handleSave() {
     setError('')
     if (!customerCode)     { setError('Customer is required.'); return }
     if (!salesChannelCode) { setError('Sales Channel is required.'); return }
-    if (!itemNo)           { setError('Item is required.'); return }
+    if (!baseItemNo)       { setError('Base Item is required.'); return }
     if (!startMonth)       { setError('Start month is required.'); return }
     if (!endMonth)         { setError('End month is required.'); return }
     if (startMonth > endMonth) { setError('"Start" must be before or equal to "End".'); return }
+
+    const variantSuffix = normaliseVariant(variantInput)
+    if (variantSuffix === null) {
+      setError('Variant must be blank, ".006", or "006" (dot + 3 chars).')
+      return
+    }
+
     const p = parseFloat(price)
     if (isNaN(p) || p < 0) { setError('Price must be a non-negative number.'); return }
 
     await onSave({
       CustomerCode:     customerCode,
       SalesChannelCode: salesChannelCode,
-      ItemNo:           itemNo,
+      BaseItemNo:       baseItemNo,
+      VariantSuffix:    variantSuffix,
       StartDate:        ymToApiDate(startMonth),
       EndDate:          ymToApiDate(endMonth),
       Price:            p,
@@ -84,7 +130,7 @@ function AddPriceModal({ buCode, customers, channels, items, onSave, onClose, sa
 
   return (
     <div className="modal-overlay" onClick={handleBackdrop}>
-      <div className="modal" style={{ width: 440 }}>
+      <div className="modal" style={{ width: 460 }}>
         <h3>Add Price Range</h3>
 
         {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
@@ -110,13 +156,28 @@ function AddPriceModal({ buCode, customers, channels, items, onSave, onClose, sa
         </div>
 
         <div className="modal-row">
-          <label>Item</label>
-          <select value={itemNo} onChange={e => setItemNo(e.target.value)}>
+          <label>Base Item</label>
+          <select value={baseItemNo} onChange={e => setBaseItemNo(e.target.value)}>
             <option value="">— select —</option>
-            {items.map(i => (
-              <option key={i.ItemNo} value={i.ItemNo}>{i.ItemNo} — {i.Description}</option>
+            {baseItems.map(b => (
+              <option key={b.base} value={b.base}>{b.base} — {b.description}</option>
             ))}
           </select>
+        </div>
+
+        <div className="modal-row">
+          <label>Variant</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="text"
+              value={variantInput}
+              onChange={e => setVariantInput(e.target.value)}
+              placeholder=".006  (blank = all variants)"
+              style={{ width: 180, fontFamily: 'monospace' }}
+              maxLength={4}
+            />
+            <span style={{ fontSize: 11, color: 'var(--c-muted)' }}>blank = all variants</span>
+          </div>
         </div>
 
         <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
@@ -156,7 +217,7 @@ function ConflictModal({ summary, onConfirm, onCancel, saving }) {
 
   return (
     <div className="modal-overlay">
-      <div className="modal" style={{ width: 520 }}>
+      <div className="modal" style={{ width: 560 }}>
         <h3>Price Conflicts</h3>
         <p style={{ fontSize: 13, color: 'var(--c-muted)', marginBottom: 12 }}>
           {conflictCount > 0
@@ -183,7 +244,7 @@ function ConflictModal({ summary, onConfirm, onCancel, saving }) {
             }}>
               {summary.conflict_rows.map((r, i) => (
                 <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid var(--c-border)', color: 'var(--c-muted)' }}>
-                  {r.CustomerCode} · {r.SalesChannelCode} · {r.ItemNo} · {r.PriceMonth} →
+                  {r.CustomerCode} · {r.SalesChannelCode} · {r.BaseItemNo}{r.VariantSuffix || ''} · {r.PriceMonth} →
                   existing {r.ExistingPrice} / new {r.NewPrice}
                 </div>
               ))}
@@ -204,7 +265,7 @@ function ConflictModal({ summary, onConfirm, onCancel, saving }) {
 
 // ── Import modal ───────────────────────────────────────────────────────────────
 function ImportModal({ buCode, onClose, onDone }) {
-  const [step,       setStep]       = useState('pick')   // 'pick' | 'confirm'
+  const [step,       setStep]       = useState('pick')
   const [validation, setValidation] = useState(null)
   const [loading,    setLoading]    = useState(false)
   const [saving,     setSaving]     = useState(false)
@@ -259,7 +320,8 @@ function ImportModal({ buCode, onClose, onDone }) {
       <div className="modal" style={{ width: 420 }}>
         <h3>Import Prices</h3>
         <p style={{ fontSize: 13, color: 'var(--c-muted)', marginBottom: 16 }}>
-          Upload an Excel file (.xlsx) with columns: CustomerCode, ItemNo, SalesChannelCode, StartDate, EndDate, Price.
+          Upload an Excel file (.xlsx) with columns: CustomerCode, Base Item, Variant,
+          SalesChannelCode, StartDate, EndDate, Price.
           Download the template first to get the correct format.
         </p>
 
@@ -301,7 +363,7 @@ export default function PriceMaintenance() {
 
   const [showAdd,    setShowAdd]    = useState(false)
   const [showImport, setShowImport] = useState(false)
-  const [conflict,   setConflict]  = useState(null)   // { summary, body } for deferred confirm
+  const [conflict,   setConflict]  = useState(null)
   const [saving,     setSaving]    = useState(false)
   const [error,      setError]     = useState('')
   const [successMsg, setSuccessMsg] = useState('')
@@ -317,7 +379,6 @@ export default function PriceMaintenance() {
     return bus.filter(b => me.businessUnits?.some(ub => ub.BusinessUnitCode === b.Code))
   }, [me, bus])
 
-  // Set default BU
   const activeBU = selectedBU || myBUs[0]?.Code || ''
 
   const { data: customers = [] } = useQuery({
@@ -341,6 +402,7 @@ export default function PriceMaintenance() {
     : null
 
   // ── Price data ────────────────────────────────────────────────────────────
+  // item_no filter passes the combined base+variant string; the backend splits it
   const priceQueryKey = ['prices', activeBU, selectedCustomer, filterChannel, filterItem]
 
   const { data: priceRanges = [], isLoading: pricesLoading } = useQuery({
@@ -377,9 +439,10 @@ export default function PriceMaintenance() {
   // ── Delete range ──────────────────────────────────────────────────────────
   const handleDeleteRange = useCallback(async (row) => {
     const monthCount = row.PriceIDs?.length ?? 1
+    const itemLabel  = row.BaseItemNo + (row.VariantSuffix || '')
     const label = monthCount === 1
-      ? `Delete 1 price row for ${row.ItemNo} (${formatMonthDisplay(row.StartDate)})?`
-      : `Delete ${monthCount} months of pricing for ${row.ItemNo} (${formatMonthDisplay(row.StartDate)} – ${formatMonthDisplay(row.EndDate)})?`
+      ? `Delete 1 price row for ${itemLabel} (${formatMonthDisplay(row.StartDate)})?`
+      : `Delete ${monthCount} months of pricing for ${itemLabel} (${formatMonthDisplay(row.StartDate)} – ${formatMonthDisplay(row.EndDate)})?`
 
     if (!window.confirm(label)) return
 
@@ -402,10 +465,17 @@ export default function PriceMaintenance() {
       cellStyle:   { fontSize: 11 },
     },
     {
-      headerName:  'Item No',
-      field:       'ItemNo',
+      headerName:  'Base Item',
+      field:       'BaseItemNo',
       width:       120,
       cellStyle:   { fontSize: 11, fontFamily: 'monospace' },
+    },
+    {
+      headerName:  'Variant',
+      field:       'VariantSuffix',
+      width:       100,
+      cellStyle:   { fontSize: 11, fontFamily: 'monospace' },
+      valueFormatter: p => p.value === '' || p.value == null ? 'All variants' : p.value,
     },
     {
       headerName:  'Description',
@@ -492,7 +562,6 @@ export default function PriceMaintenance() {
     try {
       const result = await upsertPrice(activeBU, body)
       if (result.import_token) {
-        // Conflicts — show confirmation dialog
         setConflict({ summary: result, body })
         setShowAdd(false)
       } else {
@@ -591,8 +660,8 @@ export default function PriceMaintenance() {
             type="text"
             value={filterItem}
             onChange={e => setFilterItem(e.target.value)}
-            placeholder="Filter by item…"
-            style={{ width: 140 }}
+            placeholder="Filter by base item…"
+            style={{ width: 150 }}
           />
         </div>
 

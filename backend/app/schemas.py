@@ -270,7 +270,8 @@ class LYActualsRow(BaseModel):
 class PriceRangeCreate(BaseModel):
     CustomerCode:     str
     SalesChannelCode: str
-    ItemNo:           str
+    BaseItemNo:       str
+    VariantSuffix:    str = ''
     StartDate:        str   # YYYY-MM-DD — parsed by pricing service
     EndDate:          str   # YYYY-MM-DD — parsed by pricing service
     Price:            Decimal
@@ -286,7 +287,8 @@ class PriceRangeResponse(BaseModel):
     CustomerCode:     str
     CustomerName:     str
     SalesChannelCode: str
-    ItemNo:           str
+    BaseItemNo:       str
+    VariantSuffix:    str
     ItemDescription:  str
     StartDate:        date    # First PriceMonth in the contiguous range
     EndDate:          date    # Last PriceMonth in the contiguous range
