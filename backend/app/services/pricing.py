@@ -286,16 +286,18 @@ def normalise_variant_suffix(raw: str) -> str | None:
 
 # ── Item existence validation ─────────────────────────────────────────────────
 
-def _item_exists_for_base(base_item: str, bu_code: str, db: Session) -> bool:
+def _item_exists_for_base(base_item: str, db: Session) -> bool:
     """
-    True if tblItem (within bu_code) has either:
+    True if tblItem has either:
       - an exact row ItemNo = base_item, OR
       - at least one variant row whose split gives base_item
-        (checked with LEFT/SUBSTRING, not LIKE).
+        (checked with LEFT/SUBSTRING, not LIKE, so % and _ in item numbers are safe).
+
+    tblItem is globally scoped (no BusinessUnitCode column); region availability
+    is tracked via per-BU IsActive_XX flags rather than row-level partitioning.
     """
     n = len(base_item)
     return db.query(Item).filter(
-        Item.BusinessUnitCode == bu_code,
         or_(
             Item.ItemNo == base_item,
             and_(
@@ -304,15 +306,6 @@ def _item_exists_for_base(base_item: str, bu_code: str, db: Session) -> bool:
                 func.substring(Item.ItemNo, n + 1, 1) == '.',
             ),
         ),
-    ).first() is not None
-
-
-def _item_exists_for_variant(base_item: str, variant_suffix: str, bu_code: str, db: Session) -> bool:
-    """True if tblItem (within bu_code) contains ItemNo = base_item + variant_suffix."""
-    full = base_item + variant_suffix
-    return db.query(Item).filter(
-        Item.ItemNo           == full,
-        Item.BusinessUnitCode == bu_code,
     ).first() is not None
 
 
@@ -398,12 +391,13 @@ def validate_import_rows(
             unique_pairs.add((base, suffix))
 
     # Batch check full variant items (suffix != '')
+    # tblItem has no BusinessUnitCode column — items are global; region scoping
+    # uses IsActive_XX flags, not row-level partitioning.
     full_item_nos   = {base + suffix for base, suffix in unique_pairs if suffix}
     valid_full_set: set[str] = set()
     if full_item_nos:
         found = db.query(Item).filter(
             Item.ItemNo.in_(full_item_nos),
-            Item.BusinessUnitCode == bu_code,
         ).all()
         valid_full_set = {i.ItemNo for i in found}
 
@@ -414,14 +408,13 @@ def validate_import_rows(
         # Exact matches first
         exact_found = db.query(Item).filter(
             Item.ItemNo.in_(base_only_items),
-            Item.BusinessUnitCode == bu_code,
         ).all()
         valid_base_set = {i.ItemNo for i in exact_found}
 
         # For bases not found exactly, check if any variant exists for them
         missing_bases = base_only_items - valid_base_set
         for base in missing_bases:
-            if _item_exists_for_base(base, bu_code, db):
+            if _item_exists_for_base(base, db):
                 valid_base_set.add(base)
 
     valid_rows:  list[dict] = []
