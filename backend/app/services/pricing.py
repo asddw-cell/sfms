@@ -7,7 +7,9 @@ re-implement the logic inline.
 """
 from __future__ import annotations
 
+import logging
 import re
+import time
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -17,6 +19,8 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.models import Item, Price
+
+_log = logging.getLogger(__name__)
 
 
 # ── Item split / join helpers ─────────────────────────────────────────────────
@@ -148,12 +152,15 @@ def get_effective_prices_bulk(rows, db: Session) -> dict[int, tuple[Decimal, boo
     """
     Batch price resolution for the forecast GET endpoint.
 
-    Uses two set-based queries:
-      - one for base prices  (VariantSuffix = '')
-      - one for exact variant prices
+    Replaces two large OR-of-AND batch queries with a single tblPrice fetch
+    using IN lists on (BusinessUnitCode, CustomerCode, SalesChannelCode) and
+    a BETWEEN on PriceMonth.  Resolution to (effective_price, is_missing_price)
+    is done in Python with the same lookup order as get_effective_price:
+      override → exact variant → base (VariantSuffix='') → 0.
 
     Returns a dict keyed by EntryNo -> (effective_price, is_missing_price).
     """
+    _t0 = time.perf_counter()
     result: dict[int, tuple[Decimal, bool]] = {}
 
     override_rows = [r for r in rows if r.IsPriceOverride]
@@ -165,100 +172,121 @@ def get_effective_prices_bulk(rows, db: Session) -> dict[int, tuple[Decimal, boo
     if not lookup_rows:
         return result
 
-    # Resolve aliases in a single batch customer query
+    # ── Alias resolution ──────────────────────────────────────────────────────
     unique_customers = {(r.CustomerCode, r.BusinessUnitCode) for r in lookup_rows}
 
     from app.models import Customer
     customer_conditions = [
-        and_(
-            Customer.Code             == cust,
-            Customer.BusinessUnitCode == bu,
-        )
+        and_(Customer.Code == cust, Customer.BusinessUnitCode == bu)
         for cust, bu in unique_customers
     ]
+    _ta = time.perf_counter()
     customers = _chunked_or_query(db, Customer, customer_conditions, params_per_condition=2)
+    _log.debug("price_bulk alias %.3fs (%d cond)", time.perf_counter() - _ta, len(customer_conditions))
 
+    # alias_map: (orig_cust, orig_bu) → (price_cust, price_bu)
     alias_map: dict[tuple, tuple] = {}
     for c in customers:
-        key = (c.Code, c.BusinessUnitCode)
+        orig_key = (c.Code, c.BusinessUnitCode)
         if c.PriceAliasCode and c.PriceAliasBUCode:
-            alias_map[key] = (c.PriceAliasCode, c.PriceAliasBUCode)
+            alias_map[orig_key] = (c.PriceAliasCode, c.PriceAliasBUCode)
         else:
-            alias_map[key] = key
+            alias_map[orig_key] = orig_key
 
-    # Build deduplicated lookup key sets
-    base_keys:    set[tuple] = set()  # (bu, cust, chan, base, month)
-    variant_keys: set[tuple] = set()  # (bu, cust, chan, base, suffix, month)
+    # ── Build IN-list members and PriceMonth range ────────────────────────────
+    lookup_bus:   set[str]  = set()
+    lookup_custs: set[str]  = set()
+    lookup_chans: set[str]  = set()
+    min_month:    date | None = None
+    max_month:    date | None = None
+
+    # Per-row resolved keys for the Python resolution pass
+    row_keys: list[tuple] = []  # (entry_no, price_bu, price_cust, chan, base, suffix, month)
 
     for r in lookup_rows:
-        lookup_bu, lookup_cust = alias_map.get(
-            (r.CustomerCode, r.BusinessUnitCode),
-            (r.CustomerCode, r.BusinessUnitCode),
-        )
+        orig_key = (r.CustomerCode, r.BusinessUnitCode)
+        price_cust, price_bu = alias_map.get(orig_key, orig_key)
         base_item, variant_suffix = split_item_no(r.ItemNo)
         month = r.ForecastDate.replace(day=1)
 
-        base_keys.add((lookup_bu, lookup_cust, r.SalesChannelCode, base_item, month))
+        lookup_bus.add(price_bu)
+        lookup_custs.add(price_cust)
+        lookup_chans.add(r.SalesChannelCode)
+
+        if min_month is None or month < min_month:
+            min_month = month
+        if max_month is None or month > max_month:
+            max_month = month
+
+        row_keys.append(
+            (r.EntryNo, price_bu, price_cust, r.SalesChannelCode, base_item, variant_suffix, month)
+        )
+
+    # ── Single bulk price fetch ───────────────────────────────────────────────
+    # Parameters: len(bus) + len(custs) + len(chans) + 2 (BETWEEN bounds).
+    # If distinct customers somehow exceed the safe budget, chunk by customers.
+    _MARGIN     = 100
+    _fixed_params  = len(lookup_bus) + len(lookup_chans) + 2
+    _max_custs_per_chunk = max(1, 2100 - _MARGIN - _fixed_params)
+
+    _tp = time.perf_counter()
+    price_map: dict[tuple, Decimal] = {}
+    cust_list  = list(lookup_custs)
+    _n_chunks  = 0
+
+    for _cs in range(0, len(cust_list), _max_custs_per_chunk):
+        cust_chunk = cust_list[_cs : _cs + _max_custs_per_chunk]
+        _n_chunks += 1
+        fetched = (
+            db.query(
+                Price.BusinessUnitCode,
+                Price.CustomerCode,
+                Price.SalesChannelCode,
+                Price.BaseItemNo,
+                Price.VariantSuffix,
+                Price.PriceMonth,
+                Price.Price,
+            )
+            .filter(
+                Price.BusinessUnitCode.in_(list(lookup_bus)),
+                Price.CustomerCode.in_(cust_chunk),
+                Price.SalesChannelCode.in_(list(lookup_chans)),
+                Price.PriceMonth >= min_month,
+                Price.PriceMonth <= max_month,
+            )
+            .all()
+        )
+        for p in fetched:
+            price_map[
+                (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode,
+                 p.BaseItemNo, p.VariantSuffix, p.PriceMonth)
+            ] = p.Price
+
+    _log.debug(
+        "price_bulk fetch %.3fs (%d price rows, %d bus, %d custs, %d chans, %s–%s, %d chunk(s))",
+        time.perf_counter() - _tp, len(price_map),
+        len(lookup_bus), len(lookup_custs), len(lookup_chans),
+        min_month, max_month, _n_chunks,
+    )
+
+    # ── Python resolution — same lookup order as get_effective_price ──────────
+    for entry_no, price_bu, price_cust, chan, base_item, variant_suffix, month in row_keys:
         if variant_suffix:
-            variant_keys.add((lookup_bu, lookup_cust, r.SalesChannelCode, base_item, variant_suffix, month))
-
-    # Fetch base prices
-    base_conditions = [
-        and_(
-            Price.BusinessUnitCode == bu,
-            Price.CustomerCode     == cust,
-            Price.SalesChannelCode == chan,
-            Price.BaseItemNo       == base,
-            Price.VariantSuffix    == '',
-            Price.PriceMonth       == month,
-        )
-        for bu, cust, chan, base, month in base_keys
-    ]
-    base_price_rows = _chunked_or_query(db, Price, base_conditions, params_per_condition=6)
-    base_price_map: dict[tuple, Decimal] = {
-        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.PriceMonth): p.Price
-        for p in base_price_rows
-    }
-
-    # Fetch exact variant prices
-    variant_conditions = [
-        and_(
-            Price.BusinessUnitCode == bu,
-            Price.CustomerCode     == cust,
-            Price.SalesChannelCode == chan,
-            Price.BaseItemNo       == base,
-            Price.VariantSuffix    == suffix,
-            Price.PriceMonth       == month,
-        )
-        for bu, cust, chan, base, suffix, month in variant_keys
-    ]
-    variant_price_rows = _chunked_or_query(db, Price, variant_conditions, params_per_condition=6) if variant_conditions else []
-    variant_price_map: dict[tuple, Decimal] = {
-        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p.Price
-        for p in variant_price_rows
-    }
-
-    # Map back, preferring variant over base
-    for r in lookup_rows:
-        lookup_bu, lookup_cust = alias_map.get(
-            (r.CustomerCode, r.BusinessUnitCode),
-            (r.CustomerCode, r.BusinessUnitCode),
-        )
-        base_item, variant_suffix = split_item_no(r.ItemNo)
-        month = r.ForecastDate.replace(day=1)
-
-        if variant_suffix:
-            v_key = (lookup_bu, lookup_cust, r.SalesChannelCode, base_item, variant_suffix, month)
-            if v_key in variant_price_map:
-                result[r.EntryNo] = (variant_price_map[v_key], False)
+            v_key = (price_bu, price_cust, chan, base_item, variant_suffix, month)
+            if v_key in price_map:
+                result[entry_no] = (price_map[v_key], False)
                 continue
 
-        b_key = (lookup_bu, lookup_cust, r.SalesChannelCode, base_item, month)
-        if b_key in base_price_map:
-            result[r.EntryNo] = (base_price_map[b_key], False)
+        b_key = (price_bu, price_cust, chan, base_item, '', month)
+        if b_key in price_map:
+            result[entry_no] = (price_map[b_key], False)
         else:
-            result[r.EntryNo] = (Decimal("0"), True)
+            result[entry_no] = (Decimal("0"), True)
 
+    _log.debug(
+        "price_bulk TOTAL %.3fs (%d rows, %d overrides, %d lookups, %d prices in map)",
+        time.perf_counter() - _t0, len(rows), len(override_rows), len(lookup_rows), len(price_map),
+    )
     return result
 
 

@@ -29,6 +29,7 @@ import pytest
 
 from app.services.pricing import (
     get_effective_price,
+    get_effective_prices_bulk,
     normalise_variant_suffix,
     split_item_no,
     validate_import_rows,
@@ -403,6 +404,149 @@ def test_scenario10_numeric_cell_error_message():
     as_str = str(raw_from_excel)  # '0.006'
     result = normalise_variant_suffix(as_str)
     assert result is None, f"'0.006' should not normalise to a valid suffix, got {result!r}"
+
+
+# ── get_effective_prices_bulk ─────────────────────────────────────────────────
+#
+# Mock DB helper: Customer queries return customer_rows; any other query
+# (the column-projection Price fetch) returns price_rows.
+
+def _make_bulk_db(price_rows=None, customer_rows=None):
+    price_rows    = price_rows    or []
+    customer_rows = customer_rows or []
+
+    from app.models import Customer
+
+    def _query(*args):
+        m = MagicMock()
+        if args and args[0] is Customer:
+            m.filter.return_value.all.return_value   = customer_rows
+            m.filter.return_value.first.return_value = customer_rows[0] if customer_rows else None
+        else:
+            m.filter.return_value.all.return_value   = price_rows
+            m.filter.return_value.first.return_value = price_rows[0] if price_rows else None
+        m.filter.return_value.filter.return_value = m.filter.return_value
+        return m
+
+    db = MagicMock()
+    db.query.side_effect = _query
+    return db
+
+
+def test_bulk_scenario1_base_only():
+    """Bulk: base row 5.50 → .006 and .012 variants both resolve to 5.50."""
+    base_row = _make_price(BASE, "", "5.50")
+    db       = _make_bulk_db(price_rows=[base_row])
+
+    for variant in [V006, V012]:
+        rows   = [_make_forecast_row(BASE + variant, entry_no=1)]
+        result = get_effective_prices_bulk(rows, db)
+        price, missing = result[1]
+        assert price == Decimal("5.50"), f"{variant}: expected 5.50, got {price}"
+        assert not missing
+
+
+def test_bulk_scenario2_variant_overrides_base():
+    """Bulk: base 5.50 + explicit .106 at 5.75 → .006 gets 5.50, .106 gets 5.75."""
+    base_row    = _make_price(BASE, "",   "5.50")
+    variant_row = _make_price(BASE, V106, "5.75")
+
+    for variant, expected, price_rows in [
+        (V006, "5.50", [base_row]),
+        (V106, "5.75", [variant_row, base_row]),
+    ]:
+        db     = _make_bulk_db(price_rows=price_rows)
+        rows   = [_make_forecast_row(BASE + variant, entry_no=1)]
+        result = get_effective_prices_bulk(rows, db)
+        price, missing = result[1]
+        assert price == Decimal(expected), f"{variant}: expected {expected}, got {price}"
+        assert not missing
+
+
+def test_bulk_scenario3_variant_only_other_returns_zero():
+    """Bulk: price for .006 only → .106 returns 0 / missing=True."""
+    variant_row = _make_price(BASE, V006, "4.00")
+
+    rows_006 = [_make_forecast_row(BASE + V006, entry_no=1)]
+    db_with  = _make_bulk_db(price_rows=[variant_row])
+    r006, m006 = get_effective_prices_bulk(rows_006, db_with)[1]
+    assert r006 == Decimal("4.00") and not m006
+
+    rows_106 = [_make_forecast_row(BASE + V106, entry_no=1)]
+    db_empty = _make_bulk_db(price_rows=[])
+    r106, m106 = get_effective_prices_bulk(rows_106, db_empty)[1]
+    assert r106 == Decimal("0") and m106
+
+
+def test_bulk_scenario4_per_month_fallback():
+    """Bulk: variant override for month A; month B falls back to base."""
+    month_a = date(2026, 7, 1)
+    month_b = date(2026, 8, 1)
+
+    variant_a = _make_price(BASE, V106, "5.75", month=month_a)
+    base_b    = _make_price(BASE, "",   "5.50", month=month_b)
+
+    for month, price_rows, expected in [
+        (month_a, [variant_a], "5.75"),
+        (month_b, [base_b],    "5.50"),
+    ]:
+        db   = _make_bulk_db(price_rows=price_rows)
+        rows = [_make_forecast_row(BASE + V106, month=month, entry_no=1)]
+        price, _ = get_effective_prices_bulk(rows, db)[1]
+        assert price == Decimal(expected), f"month {month}: expected {expected}"
+
+
+def test_bulk_scenario5_no_suffix_base_row():
+    """Bulk: plain item (no suffix) resolves to the base price."""
+    base_row = _make_price("PLAIN01", "", "7.99")
+    db       = _make_bulk_db(price_rows=[base_row])
+    rows     = [_make_forecast_row("PLAIN01", entry_no=1)]
+    price, missing = get_effective_prices_bulk(rows, db)[1]
+    assert price == Decimal("7.99") and not missing
+
+
+def test_bulk_scenario6_no_match_returns_zero():
+    """Bulk: no tblPrice row → 0, is_missing_price=True."""
+    db   = _make_bulk_db(price_rows=[])
+    rows = [_make_forecast_row(BASE + V006, entry_no=1)]
+    price, missing = get_effective_prices_bulk(rows, db)[1]
+    assert price == Decimal("0") and missing
+
+
+def test_bulk_scenario7_override_wins():
+    """Bulk: IsPriceOverride=True → OverridePrice returned regardless of tblPrice."""
+    base_row = _make_price(BASE, "", "5.50")
+    db       = _make_bulk_db(price_rows=[base_row])
+    rows     = [_make_forecast_row(BASE + V006, is_override=True, override_price="9.99", entry_no=1)]
+    price, missing = get_effective_prices_bulk(rows, db)[1]
+    assert price == Decimal("9.99") and not missing
+
+
+def test_bulk_large_volume_correct_results():
+    """
+    2,001 forecast rows with distinct customers all get their correct prices.
+    No SQL parameter-limit exception is raised; results are non-zero / not missing.
+    """
+    N     = 2_001
+    month = date(2026, 1, 1)
+
+    rows = [
+        _make_forecast_row(f"ITEM{i:05d}", cust=f"C{i:06d}", chan=CHAN, month=month, entry_no=i)
+        for i in range(N)
+    ]
+    price_rows = [
+        _make_price(f"ITEM{i:05d}", "", "5.00", bu=BU, cust=f"C{i:06d}", chan=CHAN, month=month)
+        for i in range(N)
+    ]
+
+    db     = _make_bulk_db(price_rows=price_rows)
+    result = get_effective_prices_bulk(rows, db)
+
+    assert len(result) == N
+    for i in range(N):
+        price, missing = result[i]
+        assert price == Decimal("5.00"), f"row {i}: expected 5.00, got {price}"
+        assert not missing
 
 
 # ── _chunked_or_query param-limit guard ──────────────────────────────────────
