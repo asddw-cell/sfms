@@ -579,7 +579,8 @@ def _commit_rows(
     Write valid_rows to tblPrice within a single transaction.
     Returns the count of rows inserted or overwritten.
     """
-    from sqlalchemy import and_, or_
+    from sqlalchemy import and_
+    from app.services.pricing import _chunked_or_query
 
     if not valid_rows:
         return 0
@@ -595,7 +596,7 @@ def _commit_rows(
         )
         for r in valid_rows
     ]
-    existing = db.query(Price).filter(or_(*conditions)).all() if conditions else []
+    existing = _chunked_or_query(db, Price, conditions, params_per_condition=6)
     existing_map = {
         (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p
         for p in existing

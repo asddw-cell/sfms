@@ -45,18 +45,19 @@ _MAX_IMPORT_ROWS   = 10_000  # Maximum input rows (before date expansion)
 
 # ── SQLAlchemy helpers ────────────────────────────────────────────────────────
 
-def _chunked_or_query(db: Session, model, conditions: list, chunk_size: int = 400):
+def _chunked_or_query(db: Session, model, conditions: list, params_per_condition: int = 1):
     """
     Execute a query using OR-of-AND conditions in chunks to stay under
     SQL Server's 2,100 bound-parameter limit.
 
-    Each price condition uses 6 parameters (BU, cust, chan, base, suffix, month);
-    chunk_size=400 gives 2,400 parameters per batch — tweak down if needed.
+    params_per_condition: bound parameters each individual condition uses
+    (e.g. 6 for a Price keyed on BU+cust+chan+base+suffix+month).
 
     Returns a flat list of all matched rows across all chunks.
     """
     if not conditions:
         return []
+    chunk_size = (2100 - 100) // params_per_condition
     results = []
     for i in range(0, len(conditions), chunk_size):
         chunk = conditions[i : i + chunk_size]
@@ -175,7 +176,7 @@ def get_effective_prices_bulk(rows, db: Session) -> dict[int, tuple[Decimal, boo
         )
         for cust, bu in unique_customers
     ]
-    customers = _chunked_or_query(db, Customer, customer_conditions)
+    customers = _chunked_or_query(db, Customer, customer_conditions, params_per_condition=2)
 
     alias_map: dict[tuple, tuple] = {}
     for c in customers:
@@ -213,7 +214,7 @@ def get_effective_prices_bulk(rows, db: Session) -> dict[int, tuple[Decimal, boo
         )
         for bu, cust, chan, base, month in base_keys
     ]
-    base_price_rows = _chunked_or_query(db, Price, base_conditions)
+    base_price_rows = _chunked_or_query(db, Price, base_conditions, params_per_condition=6)
     base_price_map: dict[tuple, Decimal] = {
         (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.PriceMonth): p.Price
         for p in base_price_rows
@@ -231,7 +232,7 @@ def get_effective_prices_bulk(rows, db: Session) -> dict[int, tuple[Decimal, boo
         )
         for bu, cust, chan, base, suffix, month in variant_keys
     ]
-    variant_price_rows = _chunked_or_query(db, Price, variant_conditions) if variant_conditions else []
+    variant_price_rows = _chunked_or_query(db, Price, variant_conditions, params_per_condition=6) if variant_conditions else []
     variant_price_map: dict[tuple, Decimal] = {
         (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p.Price
         for p in variant_price_rows
@@ -549,7 +550,7 @@ def validate_import_rows(
             )
             for r in valid_rows
         ]
-        existing = _chunked_or_query(db, Price, conditions)
+        existing = _chunked_or_query(db, Price, conditions, params_per_condition=6)
 
         existing_keys = {
             (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p

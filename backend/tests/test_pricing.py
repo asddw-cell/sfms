@@ -403,3 +403,58 @@ def test_scenario10_numeric_cell_error_message():
     as_str = str(raw_from_excel)  # '0.006'
     result = normalise_variant_suffix(as_str)
     assert result is None, f"'0.006' should not normalise to a valid suffix, got {result!r}"
+
+
+# ── _chunked_or_query param-limit guard ──────────────────────────────────────
+
+def test_chunked_or_query_stays_under_param_limit():
+    """
+    2,001 Price conditions at 6 params each must be split across enough batches
+    that no single DB call would exceed SQL Server's 2,100 bound-parameter limit.
+
+    chunk_size = (2100 - 100) // 6 = 333 → ceil(2001 / 333) = 7 calls minimum.
+    The old fixed chunk_size=400 would produce only 6 calls, so this test
+    also proves the regression is fixed.
+    """
+    from sqlalchemy import and_
+    from app.models import Price
+    from app.services.pricing import _chunked_or_query
+
+    N             = 2_001
+    PARAMS_PER    = 6
+    SAFE_CHUNK    = (2100 - 100) // PARAMS_PER        # 333
+    MIN_CALLS     = -(-N // SAFE_CHUNK)                # ceil(2001/333) = 7
+
+    call_count = [0]
+
+    def counting_query(model):
+        m = MagicMock()
+        def capture_filter(*args):
+            call_count[0] += 1
+            r = MagicMock()
+            r.all.return_value = []
+            return r
+        m.filter.side_effect = capture_filter
+        return m
+
+    db = MagicMock()
+    db.query.side_effect = counting_query
+
+    conditions = [
+        and_(
+            Price.BusinessUnitCode == "BU",
+            Price.CustomerCode     == f"C{i:06d}",
+            Price.SalesChannelCode == "CH",
+            Price.BaseItemNo       == f"I{i:06d}",
+            Price.VariantSuffix    == "",
+            Price.PriceMonth       == date(2026, 1, 1),
+        )
+        for i in range(N)
+    ]
+
+    _chunked_or_query(db, Price, conditions, params_per_condition=PARAMS_PER)
+
+    assert call_count[0] >= MIN_CALLS, (
+        f"Expected >= {MIN_CALLS} DB calls (chunk_size={SAFE_CHUNK}) for {N} conditions, "
+        f"got {call_count[0]} — a single batch would exceed 2,100 bound parameters"
+    )
