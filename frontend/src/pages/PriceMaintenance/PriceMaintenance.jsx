@@ -8,14 +8,14 @@
  * Route: /prices
  * Min role: CanManageRefData
  */
-import { useState, useMemo, useRef, useCallback } from 'react'
+import { useState, useMemo, useRef, useCallback, useEffect, useId } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 
 import {
-  fetchBusinessUnits, fetchCustomers, fetchSalesChannels, fetchItems, fetchMe,
+  fetchBusinessUnits, fetchCustomers, fetchSalesChannels, fetchMe,
   fetchPrices, upsertPrice, deletePrice, downloadPriceTemplate,
-  importPriceFile, confirmPriceImport, updatePriceRange,
+  importPriceFile, confirmPriceImport, updatePriceRange, fetchBaseItems,
 } from '../../api/sfms'
 import { useTheme } from '../../ThemeContext'
 
@@ -56,44 +56,261 @@ function normaliseVariant(raw) {
   return null
 }
 
-function MonthPicker({ value, onChange, label }) {
+function MonthPicker({ value, onChange, label, fullWidth = false }) {
   return (
-    <div className="field-group">
+    <div className="field-group" style={fullWidth ? { width: '100%' } : {}}>
       {label && <label>{label}</label>}
       <input
         type="month"
         value={value}
         onChange={e => onChange(e.target.value)}
-        style={{ width: 130 }}
+        style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
       />
     </div>
   )
 }
 
+// ── Base-item combobox filter/rank ─────────────────────────────────────────────
+function filterAndRank(baseItems, query) {
+  if (!query || !query.trim()) {
+    return { items: baseItems.slice(0, 50), hasMore: baseItems.length > 50 }
+  }
+  const words = query.trim().toLowerCase().split(/\s+/)
+  const first = words[0]
+
+  const matched = baseItems.filter(item => {
+    const b = item.base_item_no.toLowerCase()
+    const d = item.description.toLowerCase()
+    return words.every(w => b.includes(w) || d.includes(w))
+  })
+
+  const scored = matched.map(item => {
+    const b = item.base_item_no.toLowerCase()
+    let rank
+    if (b.startsWith(first))              rank = 0
+    else if (words.some(w => b.includes(w))) rank = 1
+    else                                    rank = 2
+    return { item, rank }
+  })
+  scored.sort((a, b) => a.rank - b.rank || a.item.base_item_no.localeCompare(b.item.base_item_no))
+
+  const top50 = scored.slice(0, 50).map(r => r.item)
+  return { items: top50, hasMore: scored.length > 50 }
+}
+
+// ── Searchable base-item combobox ──────────────────────────────────────────────
+function BaseItemCombobox({ baseItems, value, onChange, disabled }) {
+  const [searchText, setSearchText] = useState('')
+  const [selected,   setSelected]   = useState(null)
+  const [open,       setOpen]       = useState(false)
+  const [activeIdx,  setActiveIdx]  = useState(-1)
+  const inputRef  = useRef()
+  const listRef   = useRef()
+  const listId    = useId()
+
+  // Sync external value → selected (e.g. when parent resets)
+  useEffect(() => {
+    if (!value) {
+      setSelected(null)
+      setSearchText('')
+    } else if (!selected || selected.base_item_no !== value) {
+      const found = baseItems.find(b => b.base_item_no === value)
+      if (found) setSelected(found)
+    }
+  }, [value, baseItems])
+
+  const { items: filtered, hasMore } = useMemo(
+    () => selected ? { items: baseItems.slice(0, 50), hasMore: baseItems.length > 50 }
+                   : filterAndRank(baseItems, searchText),
+    [selected, searchText, baseItems],
+  )
+
+  function handleSelect(item) {
+    setSelected(item)
+    setSearchText('')
+    setOpen(false)
+    setActiveIdx(-1)
+    onChange(item.base_item_no, item.variants)
+  }
+
+  function handleClear() {
+    setSelected(null)
+    setSearchText('')
+    setOpen(false)
+    setActiveIdx(-1)
+    onChange('', [])
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  function handleInputChange(e) {
+    if (selected) {
+      setSelected(null)
+      onChange('', [])
+    }
+    setSearchText(e.target.value)
+    setOpen(true)
+    setActiveIdx(-1)
+  }
+
+  function handleFocus() {
+    if (selected) {
+      requestAnimationFrame(() => inputRef.current?.select())
+    }
+    setOpen(true)
+  }
+
+  function handleBlur() {
+    setTimeout(() => setOpen(false), 150)
+  }
+
+  function handleKeyDown(e) {
+    if (!open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      setOpen(true); return
+    }
+    if (e.key === 'Escape') { setOpen(false); setActiveIdx(-1); return }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIdx(i => Math.min(i + 1, filtered.length - 1))
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIdx(i => Math.max(i - 1, 0))
+      return
+    }
+    if (e.key === 'Enter' && activeIdx >= 0 && filtered[activeIdx]) {
+      e.preventDefault()
+      handleSelect(filtered[activeIdx])
+    }
+  }
+
+  // Scroll active option into view
+  useEffect(() => {
+    if (activeIdx >= 0 && listRef.current) {
+      const el = listRef.current.querySelector(`[data-idx="${activeIdx}"]`)
+      el?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [activeIdx])
+
+  const inputValue = selected
+    ? `${selected.base_item_no} – ${selected.description}`
+    : searchText
+
+  return (
+    <div style={{ position: 'relative', minWidth: 0 }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          ref={inputRef}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-controls={listId}
+          aria-activedescendant={activeIdx >= 0 ? `${listId}-opt-${activeIdx}` : undefined}
+          value={inputValue}
+          readOnly={!!selected}
+          onChange={handleInputChange}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          placeholder="Search by item number or description…"
+          disabled={disabled}
+          autoComplete="off"
+          style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', paddingRight: 28,
+                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        />
+        {(selected || searchText) && !disabled && (
+          <button
+            type="button"
+            aria-label="Clear selection"
+            onMouseDown={e => { e.preventDefault(); handleClear() }}
+            style={{
+              position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+              background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px',
+              color: 'var(--c-muted)', fontSize: 14, lineHeight: 1,
+            }}
+          >×</button>
+        )}
+      </div>
+
+      {open && !disabled && (
+        <ul
+          ref={listRef}
+          id={listId}
+          role="listbox"
+          style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
+            background: 'var(--c-surface)', border: '1px solid var(--c-border)',
+            borderRadius: 'var(--radius)', boxShadow: '0 4px 12px rgba(0,0,0,.15)',
+            maxHeight: 220, overflowY: 'auto', margin: '2px 0', padding: 0,
+            listStyle: 'none',
+          }}
+        >
+          {filtered.length === 0 && (
+            <li style={{ padding: '8px 12px', color: 'var(--c-muted)', fontSize: 12 }}>
+              No items match
+            </li>
+          )}
+          {filtered.map((item, idx) => (
+            <li
+              key={item.base_item_no}
+              id={`${listId}-opt-${idx}`}
+              data-idx={idx}
+              role="option"
+              aria-selected={idx === activeIdx}
+              onMouseDown={e => { e.preventDefault(); handleSelect(item) }}
+              style={{
+                padding: '6px 12px', cursor: 'pointer', fontSize: 13,
+                background: idx === activeIdx ? 'var(--c-accent)' : undefined,
+                color:      idx === activeIdx ? '#fff' : undefined,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ fontFamily: 'monospace', marginRight: 6 }}>{item.base_item_no}</span>
+              <span style={{ opacity: 0.8 }}>– {item.description}</span>
+            </li>
+          ))}
+          {hasMore && (
+            <li style={{
+              padding: '6px 12px', fontSize: 11, color: 'var(--c-muted)',
+              fontStyle: 'italic', borderTop: '1px solid var(--c-border)',
+            }}>
+              Keep typing to narrow results
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 // ── Add Price Modal ────────────────────────────────────────────────────────────
-function AddPriceModal({ buCode, customers, channels, items, onSave, onClose, saving }) {
-  const [customerCode,     setCustomerCode]     = useState('')
-  const [salesChannelCode, setSalesChannelCode] = useState('')
+function AddPriceModal({
+  buCode, customers, channels,
+  initialCustomer, initialChannel,
+  onSave, onClose, saving,
+}) {
+  const [customerCode,     setCustomerCode]     = useState(initialCustomer || '')
+  const [salesChannelCode, setSalesChannelCode] = useState(initialChannel  || '')
   const [baseItemNo,       setBaseItemNo]       = useState('')
-  const [variantInput,     setVariantInput]     = useState('')
+  const [variants,         setVariants]         = useState([])  // variants for chosen base
+  const [variantSuffix,    setVariantSuffix]    = useState('')
   const [startMonth,       setStartMonth]       = useState('')
   const [endMonth,         setEndMonth]         = useState('')
   const [price,            setPrice]            = useState('')
   const [error,            setError]            = useState('')
 
-  // Compute unique base items from the loaded items list
-  const baseItems = useMemo(() => {
-    const seen = new Set()
-    const out  = []
-    for (const item of items) {
-      const [base] = splitItemNo(item.ItemNo)
-      if (!seen.has(base)) {
-        seen.add(base)
-        out.push({ base, description: item.Description })
-      }
-    }
-    return out
-  }, [items])
+  const { data: baseItems = [], isLoading: itemsLoading } = useQuery({
+    queryKey: ['base-items', buCode],
+    queryFn:  () => fetchBaseItems(buCode),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  function handleBaseItemChange(newBase, newVariants) {
+    setBaseItemNo(newBase)
+    setVariants(newVariants)
+    setVariantSuffix('')
+  }
 
   async function handleSave() {
     setError('')
@@ -103,12 +320,6 @@ function AddPriceModal({ buCode, customers, channels, items, onSave, onClose, sa
     if (!startMonth)       { setError('Start month is required.'); return }
     if (!endMonth)         { setError('End month is required.'); return }
     if (startMonth > endMonth) { setError('"Start" must be before or equal to "End".'); return }
-
-    const variantSuffix = normaliseVariant(variantInput)
-    if (variantSuffix === null) {
-      setError('Variant must be blank, ".006", or "006" (dot + 3 chars).')
-      return
-    }
 
     const p = parseFloat(price)
     if (isNaN(p) || p < 0) { setError('Price must be a non-negative number.'); return }
@@ -121,81 +332,117 @@ function AddPriceModal({ buCode, customers, channels, items, onSave, onClose, sa
       StartDate:        ymToApiDate(startMonth),
       EndDate:          ymToApiDate(endMonth),
       Price:            p,
-    })
+    }, { customerCode, salesChannelCode })
   }
 
   function handleBackdrop(e) {
     if (e.target === e.currentTarget) onClose()
   }
 
+  const gridStyle = {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '12px 16px',
+  }
+  const fullWidth = { gridColumn: '1 / -1' }
+  const fieldLabel = {
+    display: 'block', fontSize: 11, fontWeight: 600,
+    color: 'var(--c-muted)', textTransform: 'uppercase', marginBottom: 4, letterSpacing: '.4px',
+  }
+  const fieldSelect = {
+    width: '100%', minWidth: 0, boxSizing: 'border-box',
+    overflow: 'hidden', textOverflow: 'ellipsis',
+  }
+
   return (
     <div className="modal-overlay" onClick={handleBackdrop}>
-      <div className="modal" style={{ width: 460 }}>
+      <div className="modal" style={{ width: 480 }}>
         <h3>Add Price Range</h3>
 
         {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
 
-        <div className="modal-row">
-          <label>Customer</label>
-          <select value={customerCode} onChange={e => setCustomerCode(e.target.value)} autoFocus>
-            <option value="">— select —</option>
-            {customers.map(c => (
-              <option key={c.Code} value={c.Code}>{c.Name} ({c.Code})</option>
-            ))}
-          </select>
-        </div>
+        <div style={gridStyle}>
 
-        <div className="modal-row">
-          <label>Sales Channel</label>
-          <select value={salesChannelCode} onChange={e => setSalesChannelCode(e.target.value)}>
-            <option value="">— select —</option>
-            {channels.map(ch => (
-              <option key={ch.Code} value={ch.Code}>{ch.Name ?? ch.Code}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="modal-row">
-          <label>Base Item</label>
-          <select value={baseItemNo} onChange={e => setBaseItemNo(e.target.value)}>
-            <option value="">— select —</option>
-            {baseItems.map(b => (
-              <option key={b.base} value={b.base}>{b.base} — {b.description}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="modal-row">
-          <label>Variant</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input
-              type="text"
-              value={variantInput}
-              onChange={e => setVariantInput(e.target.value)}
-              placeholder=".006  (blank = all variants)"
-              style={{ width: 180, fontFamily: 'monospace' }}
-              maxLength={4}
-            />
-            <span style={{ fontSize: 11, color: 'var(--c-muted)' }}>blank = all variants</span>
+          {/* Customer — full width */}
+          <div style={fullWidth}>
+            <label style={fieldLabel}>Customer</label>
+            <select value={customerCode} onChange={e => setCustomerCode(e.target.value)}
+                    style={fieldSelect} autoFocus>
+              <option value="">— select —</option>
+              {customers.map(c => (
+                <option key={c.Code} value={c.Code}>{c.Name} ({c.Code})</option>
+              ))}
+            </select>
           </div>
-        </div>
 
-        <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-          <MonthPicker label="Start month" value={startMonth} onChange={setStartMonth} />
-          <MonthPicker label="End month"   value={endMonth}   onChange={setEndMonth}   />
-        </div>
+          {/* Sales Channel — left column */}
+          <div>
+            <label style={fieldLabel}>Sales Channel</label>
+            <select value={salesChannelCode} onChange={e => setSalesChannelCode(e.target.value)}
+                    style={fieldSelect}>
+              <option value="">— select —</option>
+              {channels.map(ch => (
+                <option key={ch.Code} value={ch.Code}>{ch.Name ?? ch.Code}</option>
+              ))}
+            </select>
+          </div>
 
-        <div className="modal-row" style={{ marginTop: 12 }}>
-          <label>Price</label>
-          <input
-            type="number"
-            min="0"
-            step="0.0001"
-            value={price}
-            onChange={e => setPrice(e.target.value)}
-            placeholder="0.00"
-            style={{ width: 120 }}
-          />
+          {/* Empty right column on Sales Channel row */}
+          <div />
+
+          {/* Base Item combobox — full width */}
+          <div style={fullWidth}>
+            <label style={fieldLabel}>Base Item</label>
+            <BaseItemCombobox
+              baseItems={baseItems}
+              value={baseItemNo}
+              onChange={handleBaseItemChange}
+              disabled={itemsLoading}
+            />
+          </div>
+
+          {/* Variant dropdown — left column */}
+          <div>
+            <label style={fieldLabel}>Variant</label>
+            <select
+              value={variantSuffix}
+              onChange={e => setVariantSuffix(e.target.value)}
+              disabled={!baseItemNo}
+              style={fieldSelect}
+              title="All variants = price applies to all variants of this base item"
+            >
+              <option value="">All variants</option>
+              {variants.map(v => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Empty right column on Variant row */}
+          <div />
+
+          {/* Start Month — left, End Month — right */}
+          <div>
+            <MonthPicker label="Start month" value={startMonth} onChange={setStartMonth} />
+          </div>
+          <div>
+            <MonthPicker label="End month" value={endMonth} onChange={setEndMonth} />
+          </div>
+
+          {/* Price — left column */}
+          <div>
+            <label style={fieldLabel}>Price</label>
+            <input
+              type="number"
+              min="0"
+              step="0.0001"
+              value={price}
+              onChange={e => setPrice(e.target.value)}
+              placeholder="0.00"
+              style={{ width: '100%', minWidth: 0, boxSizing: 'border-box' }}
+            />
+          </div>
+
         </div>
 
         <div className="modal-actions" style={{ marginTop: 16 }}>
@@ -387,12 +634,6 @@ export default function PriceMaintenance() {
     enabled:  !!activeBU,
   })
 
-  const { data: items = [] } = useQuery({
-    queryKey: ['items', activeBU],
-    queryFn:  () => fetchItems(activeBU),
-    enabled:  !!activeBU,
-  })
-
   // ── Alias detection ───────────────────────────────────────────────────────
   const selectedCustomerObj = customers.find(c => c.Code === selectedCustomer)
   const isAliasCustomer     = !!(selectedCustomerObj?.PriceAliasCode)
@@ -556,7 +797,7 @@ export default function PriceMaintenance() {
   ], [canManage, handleDeleteRange, handlePriceCellChanged])
 
   // ── Add Price ─────────────────────────────────────────────────────────────
-  async function handleAddSave(body) {
+  async function handleAddSave(body, { customerCode, salesChannelCode }) {
     setSaving(true)
     setError('')
     try {
@@ -567,8 +808,19 @@ export default function PriceMaintenance() {
       } else {
         setShowAdd(false)
         qc.invalidateQueries({ queryKey: priceQueryKey })
-        setSuccessMsg(`${result.inserted ?? 1} month${(result.inserted ?? 1) !== 1 ? 's' : ''} saved.`)
-        setTimeout(() => setSuccessMsg(''), 3000)
+        const months = result.inserted ?? 1
+        const base = `${months} month${months !== 1 ? 's' : ''} saved.`
+        // Warn if the saved customer/channel won't appear in the current filter view
+        const savedForDifferent = (
+          (selectedCustomer && customerCode !== selectedCustomer) ||
+          (filterChannel    && salesChannelCode !== filterChannel)
+        )
+        const savedCustomerName = customers.find(c => c.Code === customerCode)?.Name ?? customerCode
+        const notice = savedForDifferent
+          ? ` Saved for ${savedCustomerName}. Change the filters to see these rows.`
+          : ''
+        setSuccessMsg(base + notice)
+        setTimeout(() => setSuccessMsg(''), 5000)
       }
     } catch (ex) {
       setError(ex.response?.data?.detail || ex.message)
@@ -745,7 +997,8 @@ export default function PriceMaintenance() {
           buCode={activeBU}
           customers={customers}
           channels={channels}
-          items={items}
+          initialCustomer={selectedCustomer}
+          initialChannel={filterChannel}
           onSave={handleAddSave}
           onClose={() => setShowAdd(false)}
           saving={saving}

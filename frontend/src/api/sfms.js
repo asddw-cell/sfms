@@ -22,6 +22,9 @@ export const fetchItems = (buCode, brandCode = null) =>
 export const searchItems = (buCode, q) =>
   client.get(`/reference/items/${buCode}/search`, { params: { q } }).then(r => r.data)
 
+export const fetchBaseItems = (buCode, q) =>
+  client.get(`/reference/base-items/${buCode}`, { params: q ? { q } : {} }).then(r => r.data)
+
 // ── Current user ──────────────────────────────────────────────────────────────
 export const fetchMe = () => client.get('/me').then(r => r.data)
 

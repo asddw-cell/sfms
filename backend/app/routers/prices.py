@@ -78,12 +78,31 @@ def _build_item_desc_map(rows: list[Price], db: Session) -> dict[str, str]:
     """
     Build a {full_item_no: description} map for the given price rows.
     For variant rows the full item is BaseItemNo + VariantSuffix.
-    For base rows (VariantSuffix='') the full item equals BaseItemNo.
-    Falls back to the BaseItemNo string when no tblItem row is found.
+    For base-level rows (VariantSuffix='') the key equals BaseItemNo; if that
+    exact ItemNo doesn't exist in tblItem we fall back to the description of
+    the lowest-sorted variant for that base (one extra set-based query).
     """
+    from sqlalchemy import or_
+
     full_items = {r.BaseItemNo + r.VariantSuffix for r in rows}
     items      = db.query(Item).filter(Item.ItemNo.in_(full_items)).all() if full_items else []
-    return {i.ItemNo: i.Description for i in items}
+    desc_map   = {i.ItemNo: i.Description for i in items}
+
+    # For base-level rows whose base has no direct tblItem entry, find a variant description.
+    # These are trusted internal base item strings (not user input), so LIKE 'base.___' is safe.
+    missing_bases = {
+        r.BaseItemNo for r in rows
+        if r.VariantSuffix == "" and r.BaseItemNo not in desc_map
+    }
+    if missing_bases:
+        vconds  = [Item.ItemNo.like(base + ".___") for base in missing_bases]
+        vitems  = db.query(Item).filter(or_(*vconds)).order_by(Item.ItemNo).all()
+        for vi in vitems:
+            base, _ = split_item_no(vi.ItemNo)
+            if base in missing_bases and base not in desc_map:
+                desc_map[base] = vi.Description
+
+    return desc_map
 
 
 def _item_desc(base: str, suffix: str, desc_map: dict[str, str]) -> str:

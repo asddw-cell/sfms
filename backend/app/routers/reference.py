@@ -11,8 +11,9 @@ from app.models import (
     Brand, Item, Currency, UserCustomer, UserBusinessUnit, Role
 )
 from app.schemas import (
+    BaseItemOut,
     BusinessUnitOut, ForecastTypeOut, SalesChannelOut, CustomerOut,
-    BrandOut, ItemOut, ItemSearchOut, CurrencyOut, RoleOut
+    BrandOut, ItemOut, ItemSearchOut, CurrencyOut, RoleOut,
 )
 from app.auth import get_current_user
 from app.models import User
@@ -143,6 +144,71 @@ def search_items(
 
     results = query.order_by(Item.ItemNo).limit(50).all()
     return results
+
+
+@router.get("/base-items/{bu_code}", response_model=list[BaseItemOut])
+def list_base_items(
+    bu_code: str,
+    q:       str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return distinct base items with their descriptions and variant suffix lists.
+
+    All grouping is done in Python after a single tblItem query so the split rule
+    stays in one place (split_item_no).  An optional ?q= filter is applied in Python
+    with case-insensitive AND-of-words matching — no SQL LIKE, so % and _ in the
+    query are treated as literal characters.
+    """
+    from app.services.pricing import split_item_no
+
+    region_col = _region_active_column(bu_code)
+    query = db.query(Item.ItemNo, Item.Description)
+    if region_col is not None:
+        query = query.filter(region_col == True)
+    rows = query.order_by(Item.ItemNo).all()
+
+    # Group by base item — preserve stable ordering (rows are ordered by ItemNo)
+    groups: dict[str, dict] = {}
+    for row in rows:
+        base, suffix = split_item_no(row.ItemNo)
+        if base not in groups:
+            groups[base] = {"base_desc": None, "variant_descs": []}
+        if suffix == "":
+            groups[base]["base_desc"] = row.Description
+        else:
+            groups[base]["variant_descs"].append((suffix, row.Description))
+
+    words = [w.lower() for w in q.split()] if q and q.strip() else []
+
+    result: list[BaseItemOut] = []
+    for base, g in groups.items():
+        # Sort variants deterministically (don't rely on DB ordering)
+        sorted_variants = sorted(g["variant_descs"], key=lambda x: x[0])
+
+        # Description: exact base item first, then lowest variant alphabetically
+        if g["base_desc"] is not None:
+            description = g["base_desc"]
+        elif sorted_variants:
+            description = sorted_variants[0][1]
+        else:
+            description = base
+
+        # Server-side q filter (Python string match — no SQL wildcard expansion)
+        if words:
+            base_l = base.lower()
+            desc_l = description.lower()
+            if not all(w in base_l or w in desc_l for w in words):
+                continue
+
+        result.append(BaseItemOut(
+            base_item_no = base,
+            description  = description,
+            variants     = [s for s, _ in sorted_variants],
+        ))
+
+    return result
 
 
 @router.get("/roles", response_model=list[RoleOut])

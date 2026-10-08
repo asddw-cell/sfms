@@ -266,6 +266,13 @@ class LYActualsRow(BaseModel):
     ActualsTotalValue: Decimal
 
 
+# ── Base item search ───────────────────────────────────────────────────────────
+class BaseItemOut(BaseModel):
+    base_item_no: str
+    description:  str
+    variants:     list[str]   # sorted variant suffixes, e.g. ['.006', '.012']
+
+
 # ── Prices ─────────────────────────────────────────────────────────────────────
 class PriceRangeCreate(BaseModel):
     CustomerCode:     str
