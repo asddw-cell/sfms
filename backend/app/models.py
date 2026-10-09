@@ -80,7 +80,8 @@ class Item(Base):
     IsActive_EU   = Column(Boolean,     nullable=False, default=False)
     IsActive_US   = Column(Boolean,     nullable=False, default=False)
     IsActive_AU   = Column(Boolean,     nullable=False, default=False)
-    IsActive_MX   = Column(Boolean,     nullable=False, default=False)
+    IsActive_MX      = Column(Boolean,     nullable=False, default=False)
+    GlobalItemStatus = Column(String(50),  nullable=True)
 
     brand = relationship("Brand", back_populates="items")
 

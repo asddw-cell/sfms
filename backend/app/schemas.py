@@ -50,16 +50,17 @@ class BrandOut(ORMBase):
     IsActive: bool
 
 class ItemOut(ORMBase):
-    ItemNo:        str
-    BrandCode:     str
-    Description:   str
-    UnitOfMeasure: Optional[str]
-    IsActive:      bool
-    IsActive_UK:   bool
-    IsActive_EU:   bool
-    IsActive_US:   bool
-    IsActive_AU:   bool
-    IsActive_MX:   bool
+    ItemNo:           str
+    BrandCode:        str
+    Description:      str
+    UnitOfMeasure:    Optional[str]
+    IsActive:         bool
+    IsActive_UK:      bool
+    IsActive_EU:      bool
+    IsActive_US:      bool
+    IsActive_AU:      bool
+    IsActive_MX:      bool
+    GlobalItemStatus: Optional[str] = None
 
 # ── Roles & Users ──────────────────────────────────────────────────────────────
 class RoleOut(ORMBase):

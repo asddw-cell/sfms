@@ -7,6 +7,20 @@
 import { useState, useMemo } from 'react'
 import MonthPicker from './MonthPicker'
 
+const _STATUS_COLORS = {
+  'Active':       'var(--c-success)',
+  'Development':  'var(--c-success)',
+  'Discontinued': 'var(--c-danger)',
+  'Cancelled':    'var(--c-danger)',
+  'Clear-out':    'var(--c-warn)',
+  'Sell-out':     'var(--c-warn)',
+  'Inactive':     'var(--c-warn)',
+}
+function _statusColor(status) {
+  if (!status || !status.trim()) return null
+  return _STATUS_COLORS[status] ?? 'var(--c-muted)'
+}
+
 export default function AddItemsModal({
   items,           // full item list for the BU
   brands,          // full brands list — used to resolve brand name → code
@@ -179,8 +193,15 @@ export default function AddItemsModal({
                   onChange={() => toggle(item.ItemNo)}
                   style={{ accentColor: 'var(--c-accent)', width: 15, height: 15, flexShrink: 0 }}
                 />
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, color: 'var(--c-primary)' }}>{item.ItemNo}</div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span style={{ fontWeight: 600, color: 'var(--c-primary)' }}>{item.ItemNo}</span>
+                    {_statusColor(item.GlobalItemStatus) && (
+                      <span style={{ fontSize: 12, color: _statusColor(item.GlobalItemStatus), flexShrink: 0, marginLeft: 8 }}>
+                        {item.GlobalItemStatus}
+                      </span>
+                    )}
+                  </div>
                   <div style={{ color: 'var(--c-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {item.Description}
                     {item.BrandCode && (
