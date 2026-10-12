@@ -97,10 +97,11 @@ export const importPriceFile = (buCode, file) => {
 }
 
 export const confirmPriceImport = (buCode, importToken, conflictResolution) =>
-  client.post(`/prices/${buCode}/import/confirm`, {
-    import_token:        importToken,
-    conflict_resolution: conflictResolution,
-  }).then(r => r.data)
+  client.post(
+    `/prices/${buCode}/import/confirm`,
+    { import_token: importToken, conflict_resolution: conflictResolution },
+    { timeout: 120_000 },
+  ).then(r => r.data)
 
 export const updatePriceRange = (buCode, priceIdFirst, body) =>
   client.patch(`/prices/${buCode}/${priceIdFirst}`, body).then(r => r.data)

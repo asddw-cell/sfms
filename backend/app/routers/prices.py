@@ -372,8 +372,8 @@ def upsert_price(
         raise HTTPException(422, detail=result["date_errors"])
 
     if not result["conflict_rows"]:
-        inserted = _commit_rows(result["valid_rows"], "overwrite", current_user, db)
-        return {"inserted": inserted, "updated": 0, "skipped": 0}
+        inserted, updated = _commit_rows(result["valid_rows"], "overwrite", current_user, db)
+        return {"inserted": inserted, "updated": updated, "skipped": 0}
 
     return {
         "valid_rows":    len(result["valid_rows"]),
@@ -543,6 +543,7 @@ async def import_prices(
                 ),
             })
         else:
+            r["_excel_row"] = i   # carry Excel row number into the validator
             clean_rows.append(r)
 
     if early_errors:
@@ -556,10 +557,14 @@ async def import_prices(
     result = validate_import_rows(clean_rows, bu_code, db)
 
     return ImportValidationResponse(
-        valid_rows    = len(result["valid_rows"]),
-        date_errors   = result["date_errors"],
-        conflict_rows = result["conflict_rows"],
-        import_token  = result["import_token"],
+        valid_rows     = len(result["valid_rows"]),
+        date_errors    = result["date_errors"],
+        conflict_rows  = result["conflict_rows"],
+        import_token   = result["import_token"],
+        overlap_errors = result.get("overlap_errors", []),
+        overlap_count  = result.get("overlap_count",  0),
+        warnings       = result.get("warnings",       []),
+        warnings_count = result.get("warnings_count", 0),
     )
 
 
@@ -581,29 +586,56 @@ def confirm_import(
         raise HTTPException(400, detail="Import token was issued for a different BU.")
 
     valid_rows = payload["valid_rows"]
-    inserted   = _commit_rows(valid_rows, body.conflict_resolution, current_user, db)
+    inserted, updated = _commit_rows(valid_rows, body.conflict_resolution, current_user, db)
 
-    return ImportConfirmResponse(inserted=inserted, updated=0, skipped=0)
+    return ImportConfirmResponse(inserted=inserted, updated=updated, skipped=0)
 
 
 # ── Shared write helper ───────────────────────────────────────────────────────
+
+_COMMIT_IMPORT_CHUNK = 500   # rows per bulk INSERT batch
+
 
 def _commit_rows(
     valid_rows: list[dict],
     conflict_resolution: str,
     current_user: User,
     db: Session,
-) -> int:
+) -> tuple[int, int]:
     """
-    Write valid_rows to tblPrice within a single transaction.
-    Returns the count of rows inserted or overwritten.
+    Write valid_rows to tblPrice in one transaction.
+
+    Returns (inserted_count, updated_count).
+    Raises HTTPException 422 on:
+      - internal duplicate (key, month) rows in valid_rows (safety net)
+      - database integrity error (unique key violation, FK violation, etc.)
     """
+    import logging as _logging
     from sqlalchemy import and_
+    from sqlalchemy.exc import IntegrityError
     from app.services.pricing import _chunked_or_query
 
-    if not valid_rows:
-        return 0
+    _log = _logging.getLogger(__name__)
 
+    if not valid_rows:
+        return 0, 0
+
+    # Safety net: detect duplicate (key, month) entries before touching the DB.
+    seen_keys: set[tuple] = set()
+    for r in valid_rows:
+        key = (
+            r["BusinessUnitCode"], r["CustomerCode"], r["SalesChannelCode"],
+            r["BaseItemNo"], r["VariantSuffix"], r["PriceMonth"],
+        )
+        if key in seen_keys:
+            raise HTTPException(422, detail=(
+                "The import file contains overlapping date ranges that expand to duplicate "
+                "price rows for the same customer / item / channel / month. "
+                "Validate the file to see which rows overlap, fix them, and upload again."
+            ))
+        seen_keys.add(key)
+
+    # Find which rows already exist in the DB.
     conditions = [
         and_(
             Price.BusinessUnitCode == r["BusinessUnitCode"],
@@ -617,12 +649,14 @@ def _commit_rows(
     ]
     existing = _chunked_or_query(db, Price, conditions, params_per_condition=6)
     existing_map = {
-        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p
+        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode,
+         p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p
         for p in existing
     }
 
-    now   = datetime.utcnow()
-    count = 0
+    now           = datetime.utcnow()
+    updated_count = 0
+    new_mappings: list[dict] = []
 
     for r in valid_rows:
         key = (
@@ -630,26 +664,42 @@ def _commit_rows(
             r["BaseItemNo"], r["VariantSuffix"], r["PriceMonth"],
         )
         existing_row = existing_map.get(key)
-
         if existing_row:
             if conflict_resolution == "overwrite":
-                existing_row.Price       = r["Price"]
+                existing_row.Price        = r["Price"]
                 existing_row.ModifiedBy   = current_user.UserID
                 existing_row.ModifiedDate = now
-                count += 1
+                updated_count += 1
         else:
-            db.add(Price(
-                BusinessUnitCode = r["BusinessUnitCode"],
-                CustomerCode     = r["CustomerCode"],
-                SalesChannelCode = r["SalesChannelCode"],
-                BaseItemNo       = r["BaseItemNo"],
-                VariantSuffix    = r["VariantSuffix"],
-                PriceMonth       = r["PriceMonth"],
-                Price            = r["Price"],
-                CreatedBy        = current_user.UserID,
-                CreatedDate      = now,
-            ))
-            count += 1
+            new_mappings.append({
+                "BusinessUnitCode": r["BusinessUnitCode"],
+                "CustomerCode":     r["CustomerCode"],
+                "SalesChannelCode": r["SalesChannelCode"],
+                "BaseItemNo":       r["BaseItemNo"],
+                "VariantSuffix":    r["VariantSuffix"],
+                "PriceMonth":       r["PriceMonth"],
+                "Price":            r["Price"],
+                "CreatedBy":        current_user.UserID,
+                "CreatedDate":      now,
+                "ModifiedBy":       None,
+                "ModifiedDate":     None,
+            })
 
-    db.commit()
-    return count
+    # Bulk-insert new rows in chunks to stay under SQL Server's parameter limit.
+    for start in range(0, len(new_mappings), _COMMIT_IMPORT_CHUNK):
+        chunk = new_mappings[start : start + _COMMIT_IMPORT_CHUNK]
+        db.bulk_insert_mappings(Price, chunk)
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        _log.exception("Price import commit failed")
+        raise HTTPException(422, detail=(
+            "The import could not be saved due to a database constraint violation. "
+            "This may mean the file contains rows that conflict with prices already in "
+            "the database from a concurrent import. Please try again, or contact support "
+            "if the problem persists."
+        ))
+
+    return len(new_mappings), updated_count

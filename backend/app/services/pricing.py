@@ -11,7 +11,7 @@ import logging
 import re
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -70,6 +70,112 @@ def _chunked_or_query(db: Session, model, conditions: list, params_per_condition
         else:
             results.extend(db.query(model).filter(or_(*chunk)).all())
     return results
+
+
+# ── Date helpers (shared between import and UI) ───────────────────────────────
+
+def _last_day_of_month(year: int, month: int) -> int:
+    """Return the last calendar day (e.g. 28/29/30/31) for the given year/month."""
+    if month == 12:
+        return 31
+    return (date(year, month + 1, 1) - timedelta(days=1)).day
+
+
+def _fmt_month(d: date) -> str:
+    _M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    return f"{_M[d.month - 1]} {d.year}"
+
+
+def _parse_date_keep_day(value: str, row_number: int) -> tuple[date, int]:
+    """
+    Parse a YYYY-MM-DD date string. Returns (first_of_month, original_day).
+    Raises ValueError with a user-friendly message on failure.
+    """
+    try:
+        parsed = datetime.strptime(value.strip(), "%Y-%m-%d")
+        return parsed.replace(day=1).date(), parsed.day
+    except ValueError:
+        raise ValueError(
+            f"Date '{value}' in row {row_number} could not be parsed. "
+            f"Use the format YYYY-MM-DD, e.g. 2026-07-06."
+        )
+
+
+# ── In-file overlap detection ─────────────────────────────────────────────────
+
+def _detect_in_file_overlaps(file_entries: list[dict]) -> list[dict]:
+    """
+    Given validated file-level entries (one per source row, not expanded to months),
+    return a list of overlap error dicts for any two entries under the same key
+    (customer, channel, base, suffix) that share one or more calendar months.
+
+    Touching ranges (Dec → Jan) are NOT overlaps. Same price is still an error.
+    """
+    from collections import defaultdict
+
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for entry in file_entries:
+        key = (entry["customer"], entry["channel"], entry["base"], entry["suffix"])
+        groups[key].append(entry)
+
+    errors: list[dict] = []
+
+    for key, entries in groups.items():
+        if len(entries) < 2:
+            continue
+        # Sort by start_month; within same start, sort by end_month descending so
+        # the widest range comes first (helps catch nested ranges early).
+        sorted_e = sorted(entries, key=lambda e: (e["start_month"], e["end_month"]))
+
+        # Track the furthest end_month seen before index j.
+        # If sorted_e[j].start_month > max_end_so_far, no prior entry overlaps j.
+        max_end = sorted_e[0]["end_month"]
+
+        for j in range(1, len(sorted_e)):
+            b = sorted_e[j]
+            if b["start_month"] > max_end:
+                max_end = max(max_end, b["end_month"])
+                continue
+            # Some prior entry overlaps with b — find them all.
+            for i in range(j):
+                a = sorted_e[i]
+                if b["start_month"] <= a["end_month"]:
+                    ovl_start = b["start_month"]          # b always starts >= a (sorted)
+                    ovl_end   = min(a["end_month"], b["end_month"])
+                    prices_differ = a["price"] != b["price"]
+
+                    cust, chan, base, suffix = key
+                    item_str = base + suffix
+
+                    if ovl_start == ovl_end:
+                        range_str = _fmt_month(ovl_start)
+                    else:
+                        range_str = f"{_fmt_month(ovl_start)} to {_fmt_month(ovl_end)}"
+
+                    price_note = (
+                        f" (prices differ: {a['price']} vs {b['price']})"
+                        if prices_differ
+                        else " (same price)"
+                    )
+
+                    errors.append({
+                        "row_a":         a["excel_row"],
+                        "row_b":         b["excel_row"],
+                        "customer":      cust,
+                        "channel":       chan,
+                        "item":          item_str,
+                        "overlap_start": ovl_start.isoformat(),
+                        "overlap_end":   ovl_end.isoformat(),
+                        "prices_differ": prices_differ,
+                        "message": (
+                            f"Rows {a['excel_row']} and {b['excel_row']}: "
+                            f"{cust} / {chan} / {item_str} "
+                            f"overlap {range_str}{price_note}"
+                        ),
+                    })
+            max_end = max(max_end, b["end_month"])
+
+    return errors
 
 
 # ── Alias resolution ─────────────────────────────────────────────────────────
@@ -374,6 +480,18 @@ def parse_import_date(value: str, row_number: int) -> date:
 
 # ── Import validation ─────────────────────────────────────────────────────────
 
+_EMPTY_RESULT: dict = {
+    "valid_rows":     [],
+    "date_errors":    [],
+    "conflict_rows":  [],
+    "import_token":   None,
+    "overlap_errors": [],
+    "overlap_count":  0,
+    "warnings":       [],
+    "warnings_count": 0,
+}
+
+
 def validate_import_rows(
     rows: list[dict],
     bu_code: str,
@@ -386,18 +504,24 @@ def validate_import_rows(
         CustomerCode, SalesChannelCode, BaseItemNo, VariantSuffix,
         StartDate (str), EndDate (str), Price (str/Decimal)
 
+    Optional per-row key: _excel_row (int) — Excel row number for error messages.
+
     Returns:
         {
-            "valid_rows": [...],    # expanded monthly rows ready for insert/update
-            "date_errors": [...],   # list of {row, value, message}
-            "conflict_rows": [...], # existing tblPrice rows that clash
-            "import_token": str | None
+            "valid_rows":     [...],  # expanded monthly rows ready for insert/update
+            "date_errors":    [...],  # format/existence errors (blocking)
+            "conflict_rows":  [...],  # existing tblPrice rows that clash
+            "import_token":   str | None,
+            "overlap_errors": [...],  # in-file overlaps (blocking, capped at 50)
+            "overlap_count":  int,    # total overlap errors (may be > 50)
+            "warnings":       [...],  # non-blocking (capped at 50)
+            "warnings_count": int,    # total warnings
         }
     """
     if len(rows) > _MAX_IMPORT_ROWS:
         return {
-            "valid_rows":    [],
-            "date_errors":   [{
+            **_EMPTY_RESULT,
+            "date_errors": [{
                 "row":     0,
                 "value":   str(len(rows)),
                 "message": (
@@ -406,12 +530,9 @@ def validate_import_rows(
                     f"Split the file into smaller batches and import each separately."
                 ),
             }],
-            "conflict_rows": [],
-            "import_token":  None,
         }
 
     # ── Pre-validate all unique (BaseItemNo, VariantSuffix) pairs in one batch ─
-    # Collect unique pairs that have a non-empty BaseItemNo
     unique_pairs: set[tuple[str, str]] = set()
     for row in rows:
         base   = (row.get("BaseItemNo")    or "").strip()
@@ -419,50 +540,41 @@ def validate_import_rows(
         if base:
             unique_pairs.add((base, suffix))
 
-    # Batch check full variant items (suffix != '')
-    # tblItem has no BusinessUnitCode column — items are global; region scoping
-    # uses IsActive_XX flags, not row-level partitioning.
     full_item_nos   = {base + suffix for base, suffix in unique_pairs if suffix}
     valid_full_set: set[str] = set()
     if full_item_nos:
-        found = db.query(Item).filter(
-            Item.ItemNo.in_(full_item_nos),
-        ).all()
+        found = db.query(Item).filter(Item.ItemNo.in_(full_item_nos)).all()
         valid_full_set = {i.ItemNo for i in found}
 
-    # Batch check base items (suffix == '')
     base_only_items = {base for base, suffix in unique_pairs if not suffix}
     valid_base_set: set[str] = set()
     if base_only_items:
-        # Exact matches first
-        exact_found = db.query(Item).filter(
-            Item.ItemNo.in_(base_only_items),
-        ).all()
+        exact_found = db.query(Item).filter(Item.ItemNo.in_(base_only_items)).all()
         valid_base_set = {i.ItemNo for i in exact_found}
-
-        # For bases not found exactly, check if any variant exists for them
         missing_bases = base_only_items - valid_base_set
         for base in missing_bases:
             if _item_exists_for_base(base, db):
                 valid_base_set.add(base)
 
-    valid_rows:  list[dict] = []
-    date_errors: list[dict] = []
+    # ── Per-row validation: collect file_entries and errors/warnings ───────────
+    file_entries: list[dict] = []   # one per valid source row (not yet expanded)
+    date_errors:  list[dict] = []
+    warnings_all: list[dict] = []
 
     for i, row in enumerate(rows, start=1):
-        customer_code = (row.get("CustomerCode")    or "").strip()
+        excel_row = row.get("_excel_row", i + 1)
+
+        customer_code = (row.get("CustomerCode")     or "").strip()
         channel_code  = (row.get("SalesChannelCode") or "").strip()
-        base_item     = (row.get("BaseItemNo")       or "").strip()
+        base_item     = (row.get("BaseItemNo")        or "").strip()
         variant_raw   = (row.get("VariantSuffix")    or "").strip()
-        start_raw     = (row.get("StartDate")        or "").strip()
-        end_raw       = (row.get("EndDate")          or "").strip()
+        start_raw     = (row.get("StartDate")         or "").strip()
+        end_raw       = (row.get("EndDate")           or "").strip()
         price_val     = row.get("Price")
 
-        # Skip completely blank rows
         if not any([customer_code, channel_code, base_item, start_raw, end_raw]):
             continue
 
-        # Required fields
         missing_fields = [
             name for name, val in [
                 ("CustomerCode",     customer_code),
@@ -472,144 +584,224 @@ def validate_import_rows(
         ]
         if missing_fields:
             date_errors.append({
-                "row":     i,
+                "row":     excel_row,
                 "value":   "",
-                "message": f"Row {i}: Missing required fields: {', '.join(missing_fields)}.",
+                "message": f"Row {excel_row}: Missing required fields: {', '.join(missing_fields)}.",
             })
             continue
 
-        # Validate VariantSuffix format
         variant_suffix = normalise_variant_suffix(variant_raw)
         if variant_suffix is None:
             date_errors.append({
-                "row":     i,
+                "row":     excel_row,
                 "value":   variant_raw,
                 "message": (
-                    f"Row {i}: Variant '{variant_raw}' is not valid. "
+                    f"Row {excel_row}: Variant '{variant_raw}' is not valid. "
                     f"Use '' (blank for all variants), '.006', or '006'."
                 ),
             })
             continue
 
-        # Validate item existence
         if variant_suffix:
             full_item = base_item + variant_suffix
             if full_item not in valid_full_set:
                 date_errors.append({
-                    "row":     i,
+                    "row":     excel_row,
                     "value":   full_item,
-                    "message": (
-                        f"Row {i}: Item '{full_item}' was not found in this business unit."
-                    ),
+                    "message": f"Row {excel_row}: Item '{full_item}' was not found in this business unit.",
                 })
                 continue
         else:
             if base_item not in valid_base_set:
                 date_errors.append({
-                    "row":     i,
+                    "row":     excel_row,
                     "value":   base_item,
                     "message": (
-                        f"Row {i}: Base item '{base_item}' was not found in this business unit "
+                        f"Row {excel_row}: Base item '{base_item}' was not found in this business unit "
                         f"(no exact or variant match)."
                     ),
                 })
                 continue
 
-        # Parse dates
-        start_date = end_date = None
+        # Parse dates, keeping original day for warning checks
+        start_month = end_month = None
+        start_day   = end_day   = None
 
         try:
-            start_date = parse_import_date(str(start_raw), i)
+            start_month, start_day = _parse_date_keep_day(str(start_raw), excel_row)
         except ValueError as exc:
-            date_errors.append({"row": i, "value": str(start_raw), "message": str(exc)})
+            date_errors.append({"row": excel_row, "value": str(start_raw), "message": str(exc)})
 
         try:
-            end_date = parse_import_date(str(end_raw), i)
+            end_month, end_day = _parse_date_keep_day(str(end_raw), excel_row)
         except ValueError as exc:
-            date_errors.append({"row": i, "value": str(end_raw), "message": str(exc)})
+            date_errors.append({"row": excel_row, "value": str(end_raw), "message": str(exc)})
 
-        if start_date and end_date:
-            if end_date < start_date:
-                date_errors.append({
-                    "row": i,
-                    "value": f"{start_raw} – {end_raw}",
-                    "message": f"Row {i}: EndDate must be on or after StartDate.",
-                })
-            else:
-                try:
-                    price_decimal = Decimal(str(price_val))
-                except Exception:
-                    date_errors.append({
-                        "row": i, "value": str(price_val),
-                        "message": f"Row {i}: Price '{price_val}' is not a valid number.",
-                    })
-                    continue
+        if not start_month or not end_month:
+            continue
 
-                for month in expand_date_range_to_months(start_date, end_date):
-                    valid_rows.append({
-                        "BusinessUnitCode": bu_code,
-                        "CustomerCode":     customer_code,
-                        "SalesChannelCode": channel_code,
-                        "BaseItemNo":       base_item,
-                        "VariantSuffix":    variant_suffix,
-                        "PriceMonth":       month,
-                        "Price":            price_decimal,
-                    })
+        if end_month < start_month:
+            date_errors.append({
+                "row":     excel_row,
+                "value":   f"{start_raw} – {end_raw}",
+                "message": f"Row {excel_row}: EndDate must be on or after StartDate.",
+            })
+            continue
+
+        try:
+            price_decimal = Decimal(str(price_val))
+        except Exception:
+            date_errors.append({
+                "row":     excel_row,
+                "value":   str(price_val),
+                "message": f"Row {excel_row}: Price '{price_val}' is not a valid number.",
+            })
+            continue
+
+        # ── Warnings (non-blocking) ───────────────────────────────────────────
+        if start_day != 1:
+            warnings_all.append({
+                "row":     excel_row,
+                "message": (
+                    f"Row {excel_row}: start {start_raw} will be applied from "
+                    f"{_fmt_month(start_month)}"
+                ),
+            })
+        end_last_day = _last_day_of_month(end_month.year, end_month.month)
+        if end_day != end_last_day:
+            warnings_all.append({
+                "row":     excel_row,
+                "message": (
+                    f"Row {excel_row}: end {end_raw} will be applied up to "
+                    f"{_fmt_month(end_month)}"
+                ),
+            })
+        if price_decimal == 0:
+            warnings_all.append({
+                "row":     excel_row,
+                "message": (
+                    f"Row {excel_row}: price is 0 (overrides the base-item price for "
+                    f"these months — does not fall back to another price)"
+                ),
+            })
+
+        file_entries.append({
+            "excel_row":  excel_row,
+            "bu":         bu_code,
+            "customer":   customer_code,
+            "channel":    channel_code,
+            "base":       base_item,
+            "suffix":     variant_suffix,
+            "start_month": start_month,
+            "end_month":   end_month,
+            "price":       price_decimal,
+        })
 
     if date_errors:
-        return {
-            "valid_rows":    valid_rows,
-            "date_errors":   date_errors,
-            "conflict_rows": [],
-            "import_token":  None,
-        }
-
-    # Check for conflicts
-    conflict_rows: list[dict] = []
-    if valid_rows:
-        conditions = [
-            and_(
-                Price.BusinessUnitCode == r["BusinessUnitCode"],
-                Price.CustomerCode     == r["CustomerCode"],
-                Price.SalesChannelCode == r["SalesChannelCode"],
-                Price.BaseItemNo       == r["BaseItemNo"],
-                Price.VariantSuffix    == r["VariantSuffix"],
-                Price.PriceMonth       == r["PriceMonth"],
-            )
-            for r in valid_rows
-        ]
-        existing = _chunked_or_query(db, Price, conditions, params_per_condition=6)
-
-        existing_keys = {
-            (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode, p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p
-            for p in existing
-        }
-
-        for r in valid_rows:
-            key = (
-                r["BusinessUnitCode"], r["CustomerCode"], r["SalesChannelCode"],
-                r["BaseItemNo"], r["VariantSuffix"], r["PriceMonth"],
-            )
-            if key in existing_keys:
-                p = existing_keys[key]
-                conflict_rows.append({
-                    "PriceID":         p.PriceID,
-                    "CustomerCode":    p.CustomerCode,
-                    "SalesChannelCode": p.SalesChannelCode,
-                    "BaseItemNo":      p.BaseItemNo,
-                    "VariantSuffix":   p.VariantSuffix,
-                    "PriceMonth":      p.PriceMonth.isoformat(),
-                    "ExistingPrice":   str(p.Price),
-                    "NewPrice":        str(r["Price"]),
+        # Expand valid entries for the count; no token since errors block import.
+        valid_rows: list[dict] = []
+        for entry in file_entries:
+            for month in expand_date_range_to_months(entry["start_month"], entry["end_month"]):
+                valid_rows.append({
+                    "BusinessUnitCode": bu_code,
+                    "CustomerCode":     entry["customer"],
+                    "SalesChannelCode": entry["channel"],
+                    "BaseItemNo":       entry["base"],
+                    "VariantSuffix":    entry["suffix"],
+                    "PriceMonth":       month,
+                    "Price":            entry["price"],
                 })
+        warnings_all = warnings_all[:50]
+        return {
+            "valid_rows":     valid_rows,
+            "date_errors":    date_errors,
+            "conflict_rows":  [],
+            "import_token":   None,
+            "overlap_errors": [],
+            "overlap_count":  0,
+            "warnings":       warnings_all,
+            "warnings_count": len(warnings_all),
+        }
+
+    # ── In-file overlap detection (blocking) ──────────────────────────────────
+    overlap_errors_full = _detect_in_file_overlaps(file_entries)
+    overlap_count       = len(overlap_errors_full)
+    overlap_errors      = overlap_errors_full[:50]
+
+    warnings_count = len(warnings_all)
+    warnings_capped = warnings_all[:50]
+
+    if overlap_errors_full:
+        return {
+            "valid_rows":     [],
+            "date_errors":    [],
+            "conflict_rows":  [],
+            "import_token":   None,
+            "overlap_errors": overlap_errors,
+            "overlap_count":  overlap_count,
+            "warnings":       warnings_capped,
+            "warnings_count": warnings_count,
+        }
+
+    # ── Expand valid file rows to monthly rows ────────────────────────────────
+    valid_rows = []
+    for entry in file_entries:
+        for month in expand_date_range_to_months(entry["start_month"], entry["end_month"]):
+            valid_rows.append({
+                "BusinessUnitCode": bu_code,
+                "CustomerCode":     entry["customer"],
+                "SalesChannelCode": entry["channel"],
+                "BaseItemNo":       entry["base"],
+                "VariantSuffix":    entry["suffix"],
+                "PriceMonth":       month,
+                "Price":            entry["price"],
+            })
 
     if not valid_rows:
         return {
-            "valid_rows":    [],
-            "date_errors":   [],
-            "conflict_rows": [],
-            "import_token":  None,
+            **_EMPTY_RESULT,
+            "warnings":       warnings_capped,
+            "warnings_count": warnings_count,
         }
+
+    # ── Conflict check against DB ─────────────────────────────────────────────
+    conflict_rows: list[dict] = []
+    conditions = [
+        and_(
+            Price.BusinessUnitCode == r["BusinessUnitCode"],
+            Price.CustomerCode     == r["CustomerCode"],
+            Price.SalesChannelCode == r["SalesChannelCode"],
+            Price.BaseItemNo       == r["BaseItemNo"],
+            Price.VariantSuffix    == r["VariantSuffix"],
+            Price.PriceMonth       == r["PriceMonth"],
+        )
+        for r in valid_rows
+    ]
+    existing = _chunked_or_query(db, Price, conditions, params_per_condition=6)
+
+    existing_keys = {
+        (p.BusinessUnitCode, p.CustomerCode, p.SalesChannelCode,
+         p.BaseItemNo, p.VariantSuffix, p.PriceMonth): p
+        for p in existing
+    }
+
+    for r in valid_rows:
+        key = (
+            r["BusinessUnitCode"], r["CustomerCode"], r["SalesChannelCode"],
+            r["BaseItemNo"], r["VariantSuffix"], r["PriceMonth"],
+        )
+        if key in existing_keys:
+            p = existing_keys[key]
+            conflict_rows.append({
+                "PriceID":          p.PriceID,
+                "CustomerCode":     p.CustomerCode,
+                "SalesChannelCode": p.SalesChannelCode,
+                "BaseItemNo":       p.BaseItemNo,
+                "VariantSuffix":    p.VariantSuffix,
+                "PriceMonth":       p.PriceMonth.isoformat(),
+                "ExistingPrice":    str(p.Price),
+                "NewPrice":         str(r["Price"]),
+            })
 
     token = str(uuid.uuid4())
     _import_tokens[token] = {
@@ -620,10 +812,14 @@ def validate_import_rows(
     _purge_expired_tokens()
 
     return {
-        "valid_rows":    valid_rows,
-        "date_errors":   [],
-        "conflict_rows": conflict_rows,
-        "import_token":  token,
+        "valid_rows":     valid_rows,
+        "date_errors":    [],
+        "conflict_rows":  conflict_rows,
+        "import_token":   token,
+        "overlap_errors": [],
+        "overlap_count":  0,
+        "warnings":       warnings_capped,
+        "warnings_count": warnings_count,
     }
 
 

@@ -457,53 +457,128 @@ function AddPriceModal({
 }
 
 // ── Conflict / Confirm modal ───────────────────────────────────────────────────
-function ConflictModal({ summary, onConfirm, onCancel, saving }) {
+function ConflictModal({ summary, onConfirm, onCancel, saving, confirmError }) {
   const [resolution, setResolution] = useState('overwrite')
 
-  const conflictCount = summary?.conflict_rows?.length ?? 0
+  const conflictCount  = summary?.conflict_rows?.length  ?? 0
+  const overlapErrors  = summary?.overlap_errors         ?? []
+  const overlapCount   = summary?.overlap_count          ?? overlapErrors.length
+  const warnings       = summary?.warnings               ?? []
+  const warningsCount  = summary?.warnings_count         ?? warnings.length
+  const hasBlockingErr = overlapErrors.length > 0
+
+  const confirmLabel = saving ? 'Importing…'
+    : conflictCount > 0       ? `Confirm (${resolution})`
+    : 'Confirm import'
 
   return (
     <div className="modal-overlay">
-      <div className="modal" style={{ width: 560 }}>
-        <h3>Price Conflicts</h3>
-        <p style={{ fontSize: 13, color: 'var(--c-muted)', marginBottom: 12 }}>
-          {conflictCount > 0
-            ? `${conflictCount} row${conflictCount !== 1 ? 's' : ''} conflict with existing prices. Choose how to handle them:`
-            : 'No conflicts — ready to import.'}
-        </p>
+      <div className="modal" style={{ width: 580, maxHeight: '85vh', display: 'flex', flexDirection: 'column', gap: 0 }}>
+        <h3 style={{ marginBottom: 12 }}>Price Import</h3>
 
-        {conflictCount > 0 && (
-          <>
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
-                <input type="radio" value="overwrite" checked={resolution === 'overwrite'} onChange={() => setResolution('overwrite')} />
-                <span><strong>Overwrite</strong> — replace existing prices</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, marginTop: 6 }}>
-                <input type="radio" value="skip" checked={resolution === 'skip'} onChange={() => setResolution('skip')} />
-                <span><strong>Skip</strong> — keep existing prices, only insert new months</span>
-              </label>
+        {/* ── Overlap errors (blocking) ── */}
+        {hasBlockingErr && (
+          <div style={{
+            background: 'rgba(220,53,69,.08)', border: '1px solid rgba(220,53,69,.35)',
+            borderRadius: 'var(--radius)', padding: '10px 12px', marginBottom: 12,
+          }}>
+            <div style={{ fontWeight: 600, color: 'var(--c-danger)', marginBottom: 4, fontSize: 13 }}>
+              {overlapCount} overlap error{overlapCount !== 1 ? 's' : ''} — import blocked
             </div>
-
+            <div style={{ fontSize: 12, color: 'var(--c-text)', marginBottom: 8 }}>
+              Fix these rows in your file and upload it again.
+            </div>
             <div style={{
-              maxHeight: 200, overflowY: 'auto', border: '1px solid var(--c-border)',
-              borderRadius: 'var(--radius)', fontSize: 12, padding: 8, marginBottom: 12,
+              maxHeight: 180, overflowY: 'auto', fontSize: 12, color: 'var(--c-muted)',
+              borderTop: '1px solid rgba(220,53,69,.2)', paddingTop: 6,
             }}>
-              {summary.conflict_rows.map((r, i) => (
-                <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid var(--c-border)', color: 'var(--c-muted)' }}>
-                  {r.CustomerCode} · {r.SalesChannelCode} · {r.BaseItemNo}{r.VariantSuffix || ''} · {r.PriceMonth} →
-                  existing {r.ExistingPrice} / new {r.NewPrice}
-                </div>
+              {overlapErrors.map((e, i) => (
+                <div key={i} style={{ padding: '2px 0' }}>{e.message}</div>
               ))}
+              {overlapCount > overlapErrors.length && (
+                <div style={{ fontStyle: 'italic', marginTop: 4 }}>
+                  …and {overlapCount - overlapErrors.length} more
+                </div>
+              )}
             </div>
+          </div>
+        )}
+
+        {/* ── No blocking errors: conflicts + warnings + confirm error ── */}
+        {!hasBlockingErr && (
+          <>
+            <p style={{ fontSize: 13, color: 'var(--c-muted)', marginBottom: 12 }}>
+              {conflictCount > 0
+                ? `${conflictCount} row${conflictCount !== 1 ? 's' : ''} conflict with existing prices. Choose how to handle them:`
+                : 'No conflicts — ready to import.'}
+            </p>
+
+            {conflictCount > 0 && (
+              <>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                    <input type="radio" value="overwrite" checked={resolution === 'overwrite'} onChange={() => setResolution('overwrite')} />
+                    <span><strong>Overwrite</strong> — replace existing prices</span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, marginTop: 6 }}>
+                    <input type="radio" value="skip" checked={resolution === 'skip'} onChange={() => setResolution('skip')} />
+                    <span><strong>Skip</strong> — keep existing prices, only insert new months</span>
+                  </label>
+                </div>
+                <div style={{
+                  maxHeight: 160, overflowY: 'auto', border: '1px solid var(--c-border)',
+                  borderRadius: 'var(--radius)', fontSize: 12, padding: 8, marginBottom: 12,
+                }}>
+                  {summary.conflict_rows.map((r, i) => (
+                    <div key={i} style={{ padding: '3px 0', borderBottom: '1px solid var(--c-border)', color: 'var(--c-muted)' }}>
+                      {r.CustomerCode} · {r.SalesChannelCode} · {r.BaseItemNo}{r.VariantSuffix || ''} · {r.PriceMonth} →
+                      existing {r.ExistingPrice} / new {r.NewPrice}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* ── Warnings (non-blocking) ── */}
+            {warnings.length > 0 && (
+              <div style={{
+                background: 'rgba(255,193,7,.1)', border: '1px solid rgba(255,193,7,.4)',
+                borderRadius: 'var(--radius)', padding: '8px 12px', marginBottom: 12,
+              }}>
+                <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4 }}>
+                  {warningsCount} warning{warningsCount !== 1 ? 's' : ''}
+                </div>
+                <div style={{ maxHeight: 120, overflowY: 'auto', fontSize: 12, color: 'var(--c-muted)' }}>
+                  {warnings.map((w, i) => (
+                    <div key={i} style={{ padding: '2px 0' }}>{w.message}</div>
+                  ))}
+                  {warningsCount > warnings.length && (
+                    <div style={{ fontStyle: 'italic', marginTop: 2 }}>
+                      …and {warningsCount - warnings.length} more
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Confirm-step error ── */}
+            {confirmError && (
+              <div className="error-banner" style={{ marginBottom: 12 }}>{confirmError}</div>
+            )}
           </>
         )}
 
-        <div className="modal-actions">
+        <div className="modal-actions" style={{ marginTop: 'auto', paddingTop: 4 }}>
           <button className="btn btn-ghost" onClick={onCancel} disabled={saving}>Cancel</button>
-          <button className="btn btn-primary" onClick={() => onConfirm(resolution)} disabled={saving}>
-            {saving ? 'Saving…' : `Confirm (${resolution})`}
-          </button>
+          {!hasBlockingErr && (
+            <button
+              className="btn btn-primary"
+              onClick={() => onConfirm(resolution)}
+              disabled={saving}
+            >
+              {confirmLabel}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -512,24 +587,26 @@ function ConflictModal({ summary, onConfirm, onCancel, saving }) {
 
 // ── Import modal ───────────────────────────────────────────────────────────────
 function ImportModal({ buCode, onClose, onDone }) {
-  const [step,       setStep]       = useState('pick')
-  const [validation, setValidation] = useState(null)
-  const [loading,    setLoading]    = useState(false)
-  const [saving,     setSaving]     = useState(false)
-  const [error,      setError]      = useState('')
+  const [step,         setStep]         = useState('pick')
+  const [validation,   setValidation]   = useState(null)
+  const [loading,      setLoading]      = useState(false)
+  const [saving,       setSaving]       = useState(false)
+  const [validateErr,  setValidateErr]  = useState('')
+  const [confirmErr,   setConfirmErr]   = useState('')
   const fileRef = useRef()
 
   async function handleFile(e) {
     const file = e.target.files?.[0]
     if (!file) return
-    setError('')
+    setValidateErr('')
+    setConfirmErr('')
     setLoading(true)
     try {
       const result = await importPriceFile(buCode, file)
       setValidation(result)
       setStep('confirm')
     } catch (ex) {
-      setError(ex.response?.data?.detail || ex.message)
+      setValidateErr(ex.message || 'Validation failed.')
     } finally {
       setLoading(false)
     }
@@ -537,12 +614,12 @@ function ImportModal({ buCode, onClose, onDone }) {
 
   async function handleConfirm(resolution) {
     setSaving(true)
-    setError('')
+    setConfirmErr('')
     try {
       const result = await confirmPriceImport(buCode, validation.import_token, resolution)
       onDone(result)
     } catch (ex) {
-      setError(ex.response?.data?.detail || ex.message)
+      setConfirmErr(ex.message || 'Import failed. Please try again.')
       setSaving(false)
     }
   }
@@ -558,6 +635,7 @@ function ImportModal({ buCode, onClose, onDone }) {
         onConfirm={handleConfirm}
         onCancel={onClose}
         saving={saving}
+        confirmError={confirmErr}
       />
     )
   }
@@ -572,7 +650,7 @@ function ImportModal({ buCode, onClose, onDone }) {
           Download the template first to get the correct format.
         </p>
 
-        {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
+        {validateErr && <div className="error-banner" style={{ marginBottom: 12 }}>{validateErr}</div>}
 
         <input
           ref={fileRef}
