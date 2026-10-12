@@ -1,7 +1,7 @@
 """
 schemas.py - Pydantic v2 request and response schemas.
 """
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal, Optional
@@ -303,10 +303,14 @@ class PriceRangeResponse(BaseModel):
     Price:            Decimal
 
 class ImportValidationResponse(BaseModel):
-    valid_rows:    int
-    date_errors:   list[dict]
-    conflict_rows: list[dict]
-    import_token:  Optional[str] = None
+    valid_rows:     int
+    date_errors:    list[dict]
+    conflict_rows:  list[dict]
+    import_token:   Optional[str] = None
+    overlap_errors: list[dict] = Field(default_factory=list)
+    overlap_count:  int = 0
+    warnings:       list[dict] = Field(default_factory=list)
+    warnings_count: int = 0
 
 class ImportConfirmResponse(BaseModel):
     inserted: int
