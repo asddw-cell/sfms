@@ -701,7 +701,7 @@ export default function PriceMaintenance() {
   const myBUs = useMemo(() => {
     if (!me || !bus.length) return []
     if (me.role?.CanViewAllBU) return bus
-    return bus.filter(b => me.businessUnits?.some(ub => ub.BusinessUnitCode === b.Code))
+    return bus.filter(b => me?.bu_assignments?.some(a => a.BusinessUnitCode === b.Code))
   }, [me, bus])
 
   const activeBU = selectedBU || myBUs[0]?.Code || ''

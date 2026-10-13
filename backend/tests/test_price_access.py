@@ -209,3 +209,36 @@ def test_can_view_all_bu_without_assignment_passes_bu_check():
             params={"customer_code": CUST},
         )
     assert resp.status_code == 200
+
+
+# ── Tests: non-CanViewAllBU user assigned to exactly one BU ──────────────────
+
+def test_non_can_view_all_bu_assigned_to_one_bu_can_load_prices():
+    """
+    A Manager (CanViewAllBU=0) assigned to exactly one BU can load prices for
+    that BU (200).  This is the server-side half of the BU-dropdown fix: the
+    frontend shows only their assigned BU and the endpoint honours the request.
+    """
+    with _make_client(has_bu_assignment=True, can_view_all_bu=False,
+                      role_name="Manager") as client:
+        resp = client.get(
+            f"/api/v1/prices/{BU}",
+            params={"customer_code": CUST},
+        )
+    assert resp.status_code == 200
+    assert resp.json() == []   # mock DB returns no rows — empty list is correct
+
+
+def test_non_can_view_all_bu_cannot_load_prices_for_unassigned_bu():
+    """
+    The same Manager gets 403 when requesting prices for a BU they are not
+    assigned to, confirming the BU check is enforced regardless of role.
+    """
+    OTHER_BU = "EU_EU"
+    with _make_client(has_bu_assignment=False, can_view_all_bu=False,
+                      role_name="Manager") as client:
+        resp = client.get(
+            f"/api/v1/prices/{OTHER_BU}",
+            params={"customer_code": CUST},
+        )
+    assert resp.status_code == 403
