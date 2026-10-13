@@ -42,9 +42,7 @@ function Nav() {
       <img src="/goliath-logo.png" alt="Goliath" className="nav-logo" />
       <NavLink to="/forecast">Forecast Entry</NavLink>
       <NavLink to="/changes">Change History</NavLink>
-      {me?.role?.CanManageRefData && (
-        <NavLink to="/prices">Prices</NavLink>
-      )}
+      <NavLink to="/prices">Prices</NavLink>
       {me?.role?.CanManageUsers && (
         <NavLink to="/admin/users">User Admin</NavLink>
       )}
