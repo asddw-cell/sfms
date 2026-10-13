@@ -6,7 +6,7 @@
  * the API returns them collapsed into contiguous date ranges with the same price.
  *
  * Route: /prices
- * Min role: CanManageRefData
+ * Access: any active user, scoped to their assigned business units
  */
 import { useState, useMemo, useRef, useCallback, useEffect, useId } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -701,7 +701,7 @@ export default function PriceMaintenance() {
   const myBUs = useMemo(() => {
     if (!me || !bus.length) return []
     if (me.role?.CanViewAllBU) return bus
-    return bus.filter(b => me.businessUnits?.some(ub => ub.BusinessUnitCode === b.Code))
+    return bus.filter(b => me?.bu_assignments?.some(a => a.BusinessUnitCode === b.Code))
   }, [me, bus])
 
   const activeBU = selectedBU || myBUs[0]?.Code || ''
@@ -733,8 +733,6 @@ export default function PriceMaintenance() {
     }),
     enabled: !!(activeBU && selectedCustomer && !isAliasCustomer),
   })
-
-  const canManage = me?.role?.CanManageRefData
 
   // ── Inline price edit ─────────────────────────────────────────────────────
   const handlePriceCellChanged = useCallback(async (params) => {
@@ -830,8 +828,8 @@ export default function PriceMaintenance() {
       field:         'Price',
       width:         110,
       type:          'numericColumn',
-      editable:      !!canManage,
-      cellClass:     canManage ? 'editable-cell' : undefined,
+      editable:      true,
+      cellClass:     'editable-cell',
       cellStyle:     { fontSize: 11, fontWeight: 600, textAlign: 'right' },
       valueGetter:   p => p.data?.Price != null
         ? parseFloat(parseFloat(p.data.Price).toFixed(2))
@@ -872,7 +870,7 @@ export default function PriceMaintenance() {
         </div>
       ),
     },
-  ], [canManage, handleDeleteRange, handlePriceCellChanged])
+  ], [handleDeleteRange, handlePriceCellChanged])
 
   // ── Add Price ─────────────────────────────────────────────────────────────
   async function handleAddSave(body, { customerCode, salesChannelCode }) {
@@ -955,10 +953,6 @@ export default function PriceMaintenance() {
     <div style={{ padding: '16px 24px' }}>
       <h2 style={{ marginBottom: 16, fontSize: 18 }}>Price Maintenance</h2>
 
-      {!canManage && (
-        <div className="error-banner">You do not have permission to manage price data.</div>
-      )}
-
       {/* ── Toolbar ── */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
         <div className="field-group">
@@ -1008,14 +1002,14 @@ export default function PriceMaintenance() {
         <button
           className="btn btn-ghost"
           onClick={() => setShowImport(true)}
-          disabled={!activeBU || !canManage || isAliasCustomer}
+          disabled={!activeBU || isAliasCustomer}
         >
           Import
         </button>
         <button
           className="btn btn-primary"
           onClick={() => setShowAdd(true)}
-          disabled={!activeBU || !canManage || isAliasCustomer}
+          disabled={!activeBU || isAliasCustomer}
         >
           + Add Range
         </button>
