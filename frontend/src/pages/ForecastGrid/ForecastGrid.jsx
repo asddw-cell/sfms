@@ -307,8 +307,8 @@ export default function ForecastGrid() {
     ? !!(buCode && ftCode && channelCode && itemNo)
     : !!(buCode && ftCode && channelCode && customerCode)
 
-  const { data: forecastRows = [], isLoading, error: fetchError } = useQuery({
-    queryKey: ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands],
+  const { data: forecastRows = [], isLoading, isFetching, error: fetchError } = useQuery({
+    queryKey: ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo],
     queryFn: () => fetchForecast(buCode, {
       forecast_type_code: ftCode,
       sales_channel_code: channelCode,
@@ -529,6 +529,30 @@ map.get(itemNo).months[mk] = {
     return map
   }, [supplyRows])
 
+  // ── Brand options: only brands present in the loaded data ─────────────────
+  const brandOptions = useMemo(() => {
+    const names = new Set()
+    for (const r of forecastRows) {
+      if (r.BrandName) names.add(r.BrandName)
+    }
+    for (const item of actualsItemMap.values()) {
+      if (item.brandName) names.add(item.brandName)
+    }
+    return Array.from(names)
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }, [forecastRows, actualsItemMap])
+
+  // Prune saved brand selections that no longer appear in the loaded data
+  useEffect(() => {
+    if (!canLoad || isLoading || isFetching || fetchError) return
+    if (brandOptions.length === 0) return
+    const pruned = selectedBrands.filter(b => brandOptions.includes(b))
+    if (pruned.length !== selectedBrands.length) {
+      updateSelectedBrands(pruned)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brandOptions, canLoad, isLoading, isFetching, fetchError])
+
   // ── Merge into paired F/A rows, one pair per item ─────────────────────────
   const rowData = useMemo(() => {
     // Build the item number set:
@@ -541,12 +565,9 @@ map.get(itemNo).months[mk] = {
     } else {
       allItemNoSet = new Set(forecastItemMap.keys())
       // Add actuals-only items whose brand matches the selected brands
-      const catalogueBrandMap = new Map(allItems.map(i => [i.ItemNo, i.BrandCode]))
-      for (const itemNo of actualsItemMap.keys()) {
+      for (const [itemNo, aItem] of actualsItemMap.entries()) {
         if (forecastItemMap.has(itemNo)) continue // already included
-        const brandCode  = catalogueBrandMap.get(itemNo)
-        const brandName  = brands.find(b => b.Code === brandCode)?.Name || ''
-        if (selectedBrands.includes(brandName)) allItemNoSet.add(itemNo)
+        if (selectedBrands.includes(aItem.brandName)) allItemNoSet.add(itemNo)
       }
     }
     const allItemNos = Array.from(allItemNoSet)
@@ -1566,8 +1587,8 @@ map.get(itemNo).months[mk] = {
           <div className="field-group">
             <label>Brand (optional)</label>
             <MultiSelect
-              placeholder="All brands"
-              options={brands.map(b => ({ value: b.Name, label: b.Name }))}
+              placeholder={!canLoad ? 'Select customer first' : brandOptions.length === 0 ? 'No brands in range' : 'All brands'}
+              options={brandOptions.map(n => ({ value: n, label: n }))}
               selected={selectedBrands}
               onChange={updateSelectedBrands}
             />

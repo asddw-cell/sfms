@@ -734,6 +734,19 @@ export default function PriceMaintenance() {
     enabled: !!(activeBU && selectedCustomer && !isAliasCustomer),
   })
 
+  // Reset scroll after the cell editor reaches its final layout width
+  const handlePriceEditingStarted = useCallback(params => {
+    if (params.colDef.field !== 'Price') return
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = document.activeElement
+        if (el?.tagName === 'INPUT' && el.closest('.ag-cell-inline-editing')) {
+          el.scrollLeft = 0
+        }
+      })
+    })
+  }, [])
+
   // ── Inline price edit ─────────────────────────────────────────────────────
   const handlePriceCellChanged = useCallback(async (params) => {
     if (params.column.getColId() !== 'Price') return
@@ -829,7 +842,7 @@ export default function PriceMaintenance() {
       width:         110,
       type:          'numericColumn',
       editable:      true,
-      cellClass:     'editable-cell',
+      cellClass:     'editable-cell price-cell',
       cellStyle:     { fontSize: 11, fontWeight: 600, textAlign: 'right' },
       valueGetter:   p => p.data?.Price != null
         ? parseFloat(parseFloat(p.data.Price).toFixed(2))
@@ -840,15 +853,16 @@ export default function PriceMaintenance() {
             minimumFractionDigits: 2, maximumFractionDigits: 2,
           }).format(p.value)
         : '',
+      valueParser: params => {
+        const s = String(params.newValue ?? '').trim()
+        const n = Number(s)
+        return s !== '' && !isNaN(n) && n >= 0 ? n : params.oldValue
+      },
       valueSetter: params => {
         const parsed = parseFloat(params.newValue)
         if (isNaN(parsed) || parsed < 0) return false
         params.data.Price = parsed
         return true
-      },
-      cellEditorParams: {
-        inputType: 'number',
-        style: { textAlign: 'right' },
       },
     },
     {
@@ -1059,6 +1073,7 @@ export default function PriceMaintenance() {
             onGridReady={p => p.api.sizeColumnsToFit()}
             onGridSizeChanged={() => gridRef.current?.api?.sizeColumnsToFit()}
             onCellValueChanged={handlePriceCellChanged}
+            onCellEditingStarted={handlePriceEditingStarted}
           />
         </div>
       )}
