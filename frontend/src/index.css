@@ -216,6 +216,10 @@ tr:hover td { background: var(--c-hover-row); }
 }
 .editable-cell { cursor: text; }
 .editable-cell:hover { background: rgba(33, 150, 243, 0.08) !important; }
+/* Price cell editor: hide spin buttons, no transition (prevents scroll-position bug) */
+.price-cell-editor-input::-webkit-outer-spin-button,
+.price-cell-editor-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.price-cell-editor-input { -moz-appearance: textfield; }
 .loading { padding: 40px; text-align: center; color: var(--c-muted); }
 
 /* AG Grid locked cell override */
