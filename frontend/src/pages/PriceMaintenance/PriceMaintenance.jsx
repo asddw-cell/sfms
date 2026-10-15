@@ -8,7 +8,7 @@
  * Route: /prices
  * Access: any active user, scoped to their assigned business units
  */
-import { useState, useMemo, useRef, useCallback, useEffect, useId, forwardRef, useImperativeHandle } from 'react'
+import { useState, useMemo, useRef, useCallback, useEffect, useId } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AgGridReact } from 'ag-grid-react'
 
@@ -18,65 +18,6 @@ import {
   importPriceFile, confirmPriceImport, updatePriceRange, fetchBaseItems,
 } from '../../api/sfms'
 import { useTheme } from '../../ThemeContext'
-
-// ── Price cell editor ──────────────────────────────────────────────────────────
-// Custom editor for the Price column. Defers focus/select/scrollLeft reset to
-// the next animation frame (afterGuiAttached) so they run after the cell has
-// reached its final laid-out width. Without this, right-aligned text in a
-// narrow pre-layout box causes the browser to keep a non-zero scrollLeft and
-// the value appears blank until the user arrows into it.
-const PriceCellEditor = forwardRef((props, ref) => {
-  const inputRef = useRef()
-  const rafIdRef = useRef(null)
-  const [value, setValue] = useState(() =>
-    props.charPress ?? (props.value != null ? String(props.value) : '')
-  )
-
-  useImperativeHandle(ref, () => ({
-    getValue: () => value,
-    afterGuiAttached: () => {
-      const el = inputRef.current
-      if (!el) return
-      rafIdRef.current = requestAnimationFrame(() => {
-        rafIdRef.current = null
-        el.focus()
-        if (!props.charPress) el.select()
-        el.scrollLeft = 0
-      })
-    },
-  }))
-
-  useEffect(() => () => {
-    if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current)
-  }, [])
-
-  return (
-    <input
-      ref={inputRef}
-      type="number"
-      step="0.01"
-      min="0"
-      value={value}
-      onChange={e => setValue(e.target.value)}
-      className="price-cell-editor-input"
-      style={{
-        width: '100%',
-        height: '100%',
-        boxSizing: 'border-box',
-        textAlign: 'right',
-        border: 'none',
-        outline: 'none',
-        padding: '0 6px',
-        fontSize: 11,
-        fontWeight: 600,
-        background: 'var(--c-cell-edited-bg, #e8f4ff)',
-        color: 'var(--c-text)',
-        transition: 'none',
-      }}
-    />
-  )
-})
-PriceCellEditor.displayName = 'PriceCellEditor'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -899,13 +840,22 @@ export default function PriceMaintenance() {
             minimumFractionDigits: 2, maximumFractionDigits: 2,
           }).format(p.value)
         : '',
+      valueParser: params => {
+        const s = String(params.newValue ?? '').trim()
+        const n = Number(s)
+        return s !== '' && !isNaN(n) && n >= 0 ? n : params.oldValue
+      },
       valueSetter: params => {
         const parsed = parseFloat(params.newValue)
         if (isNaN(parsed) || parsed < 0) return false
         params.data.Price = parsed
         return true
       },
-      cellEditor: PriceCellEditor,
+      cellEditorParams: {
+        // inputType: 'number' removed — text input avoids Chrome's unreliable
+        // scrollLeft/select on number inputs, fixing blank-value on wide monitors
+        style: { textAlign: 'right' },
+      },
     },
     {
       headerName: '',
