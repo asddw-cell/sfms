@@ -33,10 +33,11 @@ class BusinessUnit(Base):
 
 class ForecastType(Base):
     __tablename__ = "tblForecastType"
-    Code        = Column(Integer,     primary_key=True, autoincrement=True)
-    Name        = Column(String(100), nullable=False)
-    Description = Column(String(500), nullable=True)
-    IsActive    = Column(Boolean,     nullable=False, default=True)
+    Code             = Column(Integer,     primary_key=True, autoincrement=True)
+    Name             = Column(String(100), nullable=False)
+    Description      = Column(String(500), nullable=True)
+    IsActive         = Column(Boolean,     nullable=False, default=True)
+    IsUserSelectable = Column(Boolean,     nullable=False, default=True)
 
 
 class SalesChannel(Base):

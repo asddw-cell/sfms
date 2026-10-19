@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from datetime import date, datetime
 from decimal import Decimal
 from app.db import get_db
-from app.models import ForecastData, Item, User, UserBusinessUnit, UserCustomer, Customer
+from app.models import ForecastData, ForecastType, Item, User, UserBusinessUnit, UserCustomer, Customer
 from app.schemas import ForecastRowOut, ForecastRowCreate, ForecastRowUpdate, ForecastRowByItemOut
 from app.auth import get_current_user
 from app.services.editability import check_editable
@@ -119,6 +119,11 @@ def create_forecast_row(
     current_user: User = Depends(get_current_user),
 ):
     _validate_price_consistency(body.is_price_override, body.override_price)
+
+    ft = db.query(ForecastType).filter(ForecastType.Code == body.ForecastTypeCode).first()
+    if not ft or not ft.IsUserSelectable:
+        raise HTTPException(422, detail="This forecast type cannot be created via manual entry.")
+
     check_editable(bu_code, body.ForecastDate, body.ForecastTypeCode, current_user, db)
 
     existing = db.query(ForecastData).filter(
