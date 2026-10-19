@@ -25,11 +25,10 @@ class BusinessUnitOut(ORMBase):
     IsActive: bool
 
 class ForecastTypeOut(ORMBase):
-    Code:             int
-    Name:             str
-    Description:      Optional[str]
-    IsActive:         bool
-    IsUserSelectable: bool
+    Code: int
+    Name: str
+    Description: Optional[str]
+    IsActive: bool
 
 class SalesChannelOut(ORMBase):
     Code: str

@@ -1484,7 +1484,7 @@ map.get(itemNo).months[mk] = {
             <label>Forecast Type *</label>
             <select value={ftCode} onChange={e => updateFtCode(e.target.value)}>
               <option value="">— Select —</option>
-              {fts.filter(f => f.IsUserSelectable).map(f => <option key={f.Code} value={f.Code}>{f.Name}</option>)}
+              {fts.map(f => <option key={f.Code} value={f.Code}>{f.Name}</option>)}
             </select>
           </div>
 
