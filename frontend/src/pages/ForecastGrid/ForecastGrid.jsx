@@ -25,6 +25,7 @@ import MultiSelect from '../../components/MultiSelect'
 import AddItemsModal from '../../components/AddItemsModal'
 import GmCopyModal          from '../../components/GmCopyModal'
 import ForecastSummaryPanel from '../../components/ForecastSummaryPanel'
+const SHOW_FORECAST_SUMMARY = import.meta.env.VITE_FEATURE_FORECAST_SUMMARY === 'true'
 import MonthPicker from '../../components/MonthPicker'
 import { useTheme } from '../../ThemeContext'
 import ItemViewGrid from './ItemViewGrid'
@@ -1927,7 +1928,7 @@ map.get(itemNo).months[mk] = {
         />
       )}
 
-      {canLoad && viewMode === 'customer' && (
+      {SHOW_FORECAST_SUMMARY && canLoad && viewMode === 'customer' && (
         <ForecastSummaryPanel
           buCode={buCode}
           ftCode={ftCode}
