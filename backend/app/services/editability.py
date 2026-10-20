@@ -77,7 +77,9 @@ def check_editable(
 
     Decision sequence:
       1. Past month lock — always locked regardless of role
-      2. Invoiced actuals lock
+      2. Invoiced actuals lock — past months only; current month stays editable even
+         when the ETL has loaded invoiced actuals for it. Kept as a safety net in case
+         step 1 is ever relaxed for specific roles.
       3. BU assignment check
       4. Supply forecast — Sales Users blocked entirely
       5. Supply forecast — authorised roles (Manager/PowerUser/Admin) may edit
@@ -94,8 +96,11 @@ def check_editable(
     if forecast_month_start < current_month_start:
         raise HTTPException(403, detail="Period is before the current month and cannot be edited.")
 
-    # 2 — Invoiced actuals lock
-    if _invoiced_actuals_exist(bu_code, forecast_month_start, db):
+    # 2 — Invoiced actuals lock (past months only)
+    # The ETL may load invoiced actuals for the current month; those must NOT lock it.
+    # Step 1 already blocks all past months unconditionally, so this condition is
+    # redundant in normal operation but remains as an explicit safety net.
+    if forecast_month_start < current_month_start and _invoiced_actuals_exist(bu_code, forecast_month_start, db):
         raise HTTPException(403, detail="Invoiced actuals exist for this period — it is locked.")
 
     # 3 — BU assignment
