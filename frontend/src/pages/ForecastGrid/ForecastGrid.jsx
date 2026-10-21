@@ -762,7 +762,7 @@ map.get(itemNo).months[mk] = {
   // so it always reflects what AG Grid is actually displaying, including item filter.
   const [filteredTotals, setFilteredTotals] = useState({ qty: {}, val: {} })
 
-  function recalcTotals() {
+  const recalcTotals = useCallback(() => {
     if (!gridRef.current?.api) return
     const qty = {}
     const val = {}
@@ -777,7 +777,13 @@ map.get(itemNo).months[mk] = {
       }
     })
     setFilteredTotals({ qty, val })
-  }
+  }, [months])
+
+  // useEffect (not onRowDataUpdated) avoids the setState → pinnedTopRowData → onRowDataUpdated loop
+  useEffect(() => {
+    const id = setTimeout(recalcTotals, 0)
+    return () => clearTimeout(id)
+  }, [rowDataWithTotals, recalcTotals])
 
   const pinnedBottomRow = useMemo(() => {
     if (!rowData.length) return []
@@ -984,7 +990,7 @@ map.get(itemNo).months[mk] = {
 
     const forecastQKey = isSupplyRow
       ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
-      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo]
     const supplyQKey = ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
 
     try {
@@ -1344,7 +1350,7 @@ map.get(itemNo).months[mk] = {
     const isSupplyRow  = modalCell?.isSupplyRow
     const forecastQKey = isSupplyRow
       ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
-      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo]
     const supplyQKey   = ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
     const useFtCode    = isSupplyRow ? supplyFtCode : ftCode
     try {
@@ -1431,7 +1437,7 @@ map.get(itemNo).months[mk] = {
     const isSupplyRow  = modalCell?.isSupplyRow
     const forecastQKey = isSupplyRow
       ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
-      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo]
     try {
       await deleteForecastRow(buCode, entryNo)
       qc.setQueryData(forecastQKey, old => (old ?? []).filter(r => r.EntryNo !== entryNo))
@@ -1765,7 +1771,6 @@ map.get(itemNo).months[mk] = {
                 pinnedTopRowData={pinnedBottomRow}
                 suppressRowClickSelection
                 onGridReady={params => { recalcTotals(); params.api.sizeColumnsToFit() }}
-                onRowDataUpdated={recalcTotals}
                 onFilterChanged={recalcTotals}
                 onGridSizeChanged={() => gridRef.current?.api?.sizeColumnsToFit()}
                 onCellValueChanged={onCellValueChanged}
