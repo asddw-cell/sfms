@@ -820,6 +820,31 @@ map.get(itemNo).months[mk] = {
     saveGridPrefs({ showActuals, showLE, showLY, showSupply, hideZeroRows })
   }, [showActuals, showLE, showLY, showSupply, hideZeroRows])
 
+  // ── Hide-zero-rows external filter ─────────────────────────────────────────
+  // Refs keep the callbacks stable ([] deps) while still seeing current values.
+  const hideZeroRowsRef = useRef(hideZeroRows)
+  const zeroItemsRef    = useRef(new Set())
+
+  useEffect(() => {
+    hideZeroRowsRef.current = hideZeroRows
+    if (hideZeroRows) {
+      const s = new Set()
+      for (const row of rowDataWithTotals) {
+        if (row.rowType === 'F' && row.rowTotal === 0) s.add(row.itemNo)
+      }
+      zeroItemsRef.current = s
+    } else {
+      zeroItemsRef.current = new Set()
+    }
+    gridRef.current?.api?.onFilterChanged()
+  }, [hideZeroRows, rowDataWithTotals])
+
+  const isExternalFilterPresent = useCallback(() => hideZeroRowsRef.current, [])
+  const doesExternalFilterPass  = useCallback(
+    node => !zeroItemsRef.current.has(node.data?.itemNo),
+    []
+  )
+
   const pinnedBottomRow = useMemo(() => {
     if (!rowData.length) return []
     const totals = { brandName: '', itemNo: '', description: 'Total', rowType: '', months: {}, rowTotal: 0, rowValue: 0 }
@@ -1688,6 +1713,18 @@ map.get(itemNo).months[mk] = {
               </button>
             )}
 
+            <button
+              className="btn btn-ghost"
+              onClick={() => setHideZeroRows(v => !v)}
+              style={{
+                borderColor: hideZeroRows ? 'var(--c-accent)' : 'var(--c-border)',
+                color:       hideZeroRows ? 'var(--c-accent)' : 'var(--c-muted)',
+                fontWeight:  hideZeroRows ? 700 : 400,
+              }}
+            >
+              {hideZeroRows ? '✓ Hide 0s' : 'Hide 0s'}
+            </button>
+
             {(me?.role?.CanManageRefData || me?.role?.CanManageUsers) &&
               !fts.find(f => String(f.Code) === ftCode)?.Name?.toLowerCase().includes('gm') && (
               <button
@@ -1805,6 +1842,8 @@ map.get(itemNo).months[mk] = {
                 columnDefs={colDefs}
                 pinnedTopRowData={pinnedBottomRow}
                 suppressRowClickSelection
+                isExternalFilterPresent={isExternalFilterPresent}
+                doesExternalFilterPass={doesExternalFilterPass}
                 onGridReady={params => {
                   if (_g.colState) params.api.applyColumnState({ state: _g.colState, applyOrder: true })
                   params.api.sizeColumnsToFit()
