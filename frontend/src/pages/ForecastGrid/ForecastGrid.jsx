@@ -165,6 +165,28 @@ function saveFilters(filters) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(filters)) } catch {}
 }
 
+// ── Persist grid layout + toggles to localStorage ─────────────────────────────
+const GRID_PREFS_KEY    = 'sfms_forecast_grid'
+const GRID_PREFS_SCHEMA = 1
+
+function loadGridPrefs() {
+  try {
+    const raw = localStorage.getItem(GRID_PREFS_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw)
+    return p?.schema === GRID_PREFS_SCHEMA ? p : null
+  } catch { return null }
+}
+
+function saveGridPrefs(updates) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(GRID_PREFS_KEY) || '{}')
+    localStorage.setItem(GRID_PREFS_KEY, JSON.stringify({
+      ...existing, ...updates, schema: GRID_PREFS_SCHEMA,
+    }))
+  } catch {}
+}
+
 export default function ForecastGrid() {
   const qc      = useQueryClient()
   const gridRef = useRef()
@@ -172,6 +194,7 @@ export default function ForecastGrid() {
 
   // Initialise from localStorage, falling back to defaults
   const _f = loadFilters()
+  const _g = loadGridPrefs() ?? {}
 
   const [viewMode,      setViewMode]      = useState(_f.viewMode      || 'customer')
 
@@ -250,10 +273,11 @@ export default function ForecastGrid() {
   const [modalCell,    setModalCell]    = useState(null)
   const [showAddItems, setShowAddItems] = useState(false)
   const [showGmCopy,   setShowGmCopy]   = useState(false)
-  const [showActuals,  setShowActuals]  = useState(false)
-  const [showLE,       setShowLE]       = useState(false)
-  const [showLY,       setShowLY]       = useState(false)
-  const [showSupply,   setShowSupply]   = useState(false)
+  const [showActuals,  setShowActuals]  = useState(_g.showActuals  ?? false)
+  const [showLE,       setShowLE]       = useState(_g.showLE       ?? false)
+  const [showLY,       setShowLY]       = useState(_g.showLY       ?? false)
+  const [showSupply,   setShowSupply]   = useState(_g.showSupply   ?? false)
+  const [hideZeroRows, setHideZeroRows] = useState(_g.hideZeroRows ?? false)
   const [importing,    setImporting]    = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importProgress, setImportProgress] = useState(null)
@@ -762,7 +786,7 @@ map.get(itemNo).months[mk] = {
   // so it always reflects what AG Grid is actually displaying, including item filter.
   const [filteredTotals, setFilteredTotals] = useState({ qty: {}, val: {} })
 
-  function recalcTotals() {
+  const recalcTotals = useCallback(() => {
     if (!gridRef.current?.api) return
     const qty = {}
     const val = {}
@@ -777,7 +801,49 @@ map.get(itemNo).months[mk] = {
       }
     })
     setFilteredTotals({ qty, val })
-  }
+  }, [months])
+
+  // useEffect (not onRowDataUpdated) avoids the setState → pinnedTopRowData → onRowDataUpdated loop
+  useEffect(() => {
+    const id = setTimeout(recalcTotals, 0)
+    return () => clearTimeout(id)
+  }, [rowDataWithTotals, recalcTotals])
+
+  const saveColState = useCallback(() => {
+    if (!gridRef.current?.api) return
+    const colState = gridRef.current.api.getColumnState()
+      .filter(c => !c.colId.startsWith('months.'))
+    saveGridPrefs({ colState })
+  }, [])
+
+  useEffect(() => {
+    saveGridPrefs({ showActuals, showLE, showLY, showSupply, hideZeroRows })
+  }, [showActuals, showLE, showLY, showSupply, hideZeroRows])
+
+  // ── Hide-zero-rows external filter ─────────────────────────────────────────
+  // Refs keep the callbacks stable ([] deps) while still seeing current values.
+  const hideZeroRowsRef = useRef(hideZeroRows)
+  const zeroItemsRef    = useRef(new Set())
+
+  useEffect(() => {
+    hideZeroRowsRef.current = hideZeroRows
+    if (hideZeroRows) {
+      const s = new Set()
+      for (const row of rowDataWithTotals) {
+        if (row.rowType === 'F' && row.rowTotal === 0) s.add(row.itemNo)
+      }
+      zeroItemsRef.current = s
+    } else {
+      zeroItemsRef.current = new Set()
+    }
+    gridRef.current?.api?.onFilterChanged()
+  }, [hideZeroRows, rowDataWithTotals])
+
+  const isExternalFilterPresent = useCallback(() => hideZeroRowsRef.current, [])
+  const doesExternalFilterPass  = useCallback(
+    node => !zeroItemsRef.current.has(node.data?.itemNo),
+    []
+  )
 
   const pinnedBottomRow = useMemo(() => {
     if (!rowData.length) return []
@@ -984,7 +1050,7 @@ map.get(itemNo).months[mk] = {
 
     const forecastQKey = isSupplyRow
       ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
-      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo]
     const supplyQKey = ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
 
     try {
@@ -1344,7 +1410,7 @@ map.get(itemNo).months[mk] = {
     const isSupplyRow  = modalCell?.isSupplyRow
     const forecastQKey = isSupplyRow
       ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
-      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo]
     const supplyQKey   = ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
     const useFtCode    = isSupplyRow ? supplyFtCode : ftCode
     try {
@@ -1431,7 +1497,7 @@ map.get(itemNo).months[mk] = {
     const isSupplyRow  = modalCell?.isSupplyRow
     const forecastQKey = isSupplyRow
       ? ['supply-forecast', buCode, channelCode, customerCode, dateFrom, dateTo, supplyFtCode]
-      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo, selectedBrands]
+      : ['forecast', buCode, ftCode, channelCode, customerCode, dateFrom, dateTo]
     try {
       await deleteForecastRow(buCode, entryNo)
       qc.setQueryData(forecastQKey, old => (old ?? []).filter(r => r.EntryNo !== entryNo))
@@ -1647,6 +1713,18 @@ map.get(itemNo).months[mk] = {
               </button>
             )}
 
+            <button
+              className="btn btn-ghost"
+              onClick={() => setHideZeroRows(v => !v)}
+              style={{
+                borderColor: hideZeroRows ? 'var(--c-accent)' : 'var(--c-border)',
+                color:       hideZeroRows ? 'var(--c-accent)' : 'var(--c-muted)',
+                fontWeight:  hideZeroRows ? 700 : 400,
+              }}
+            >
+              {hideZeroRows ? '✓ Hide 0s' : 'Hide 0s'}
+            </button>
+
             {(me?.role?.CanManageRefData || me?.role?.CanManageUsers) &&
               !fts.find(f => String(f.Code) === ftCode)?.Name?.toLowerCase().includes('gm') && (
               <button
@@ -1764,9 +1842,17 @@ map.get(itemNo).months[mk] = {
                 columnDefs={colDefs}
                 pinnedTopRowData={pinnedBottomRow}
                 suppressRowClickSelection
-                onGridReady={params => { recalcTotals(); params.api.sizeColumnsToFit() }}
-                onRowDataUpdated={recalcTotals}
+                isExternalFilterPresent={isExternalFilterPresent}
+                doesExternalFilterPass={doesExternalFilterPass}
+                onGridReady={params => {
+                  if (_g.colState) params.api.applyColumnState({ state: _g.colState, applyOrder: true })
+                  params.api.sizeColumnsToFit()
+                  recalcTotals()
+                }}
                 onFilterChanged={recalcTotals}
+                onColumnResized={params => { if (params.finished) saveColState() }}
+                onColumnMoved={saveColState}
+                onColumnVisible={saveColState}
                 onGridSizeChanged={() => gridRef.current?.api?.sizeColumnsToFit()}
                 onCellValueChanged={onCellValueChanged}
                 onCellDoubleClicked={onCellDoubleClicked}
