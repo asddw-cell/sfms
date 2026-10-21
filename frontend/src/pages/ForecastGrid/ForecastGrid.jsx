@@ -165,6 +165,28 @@ function saveFilters(filters) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(filters)) } catch {}
 }
 
+// ── Persist grid layout + toggles to localStorage ─────────────────────────────
+const GRID_PREFS_KEY    = 'sfms_forecast_grid'
+const GRID_PREFS_SCHEMA = 1
+
+function loadGridPrefs() {
+  try {
+    const raw = localStorage.getItem(GRID_PREFS_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw)
+    return p?.schema === GRID_PREFS_SCHEMA ? p : null
+  } catch { return null }
+}
+
+function saveGridPrefs(updates) {
+  try {
+    const existing = JSON.parse(localStorage.getItem(GRID_PREFS_KEY) || '{}')
+    localStorage.setItem(GRID_PREFS_KEY, JSON.stringify({
+      ...existing, ...updates, schema: GRID_PREFS_SCHEMA,
+    }))
+  } catch {}
+}
+
 export default function ForecastGrid() {
   const qc      = useQueryClient()
   const gridRef = useRef()
@@ -172,6 +194,7 @@ export default function ForecastGrid() {
 
   // Initialise from localStorage, falling back to defaults
   const _f = loadFilters()
+  const _g = loadGridPrefs() ?? {}
 
   const [viewMode,      setViewMode]      = useState(_f.viewMode      || 'customer')
 
@@ -250,10 +273,11 @@ export default function ForecastGrid() {
   const [modalCell,    setModalCell]    = useState(null)
   const [showAddItems, setShowAddItems] = useState(false)
   const [showGmCopy,   setShowGmCopy]   = useState(false)
-  const [showActuals,  setShowActuals]  = useState(false)
-  const [showLE,       setShowLE]       = useState(false)
-  const [showLY,       setShowLY]       = useState(false)
-  const [showSupply,   setShowSupply]   = useState(false)
+  const [showActuals,  setShowActuals]  = useState(_g.showActuals  ?? false)
+  const [showLE,       setShowLE]       = useState(_g.showLE       ?? false)
+  const [showLY,       setShowLY]       = useState(_g.showLY       ?? false)
+  const [showSupply,   setShowSupply]   = useState(_g.showSupply   ?? false)
+  const [hideZeroRows, setHideZeroRows] = useState(_g.hideZeroRows ?? false)
   const [importing,    setImporting]    = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importProgress, setImportProgress] = useState(null)
@@ -784,6 +808,17 @@ map.get(itemNo).months[mk] = {
     const id = setTimeout(recalcTotals, 0)
     return () => clearTimeout(id)
   }, [rowDataWithTotals, recalcTotals])
+
+  const saveColState = useCallback(() => {
+    if (!gridRef.current?.api) return
+    const colState = gridRef.current.api.getColumnState()
+      .filter(c => !c.colId.startsWith('months.'))
+    saveGridPrefs({ colState })
+  }, [])
+
+  useEffect(() => {
+    saveGridPrefs({ showActuals, showLE, showLY, showSupply, hideZeroRows })
+  }, [showActuals, showLE, showLY, showSupply, hideZeroRows])
 
   const pinnedBottomRow = useMemo(() => {
     if (!rowData.length) return []
@@ -1770,8 +1805,15 @@ map.get(itemNo).months[mk] = {
                 columnDefs={colDefs}
                 pinnedTopRowData={pinnedBottomRow}
                 suppressRowClickSelection
-                onGridReady={params => { recalcTotals(); params.api.sizeColumnsToFit() }}
+                onGridReady={params => {
+                  if (_g.colState) params.api.applyColumnState({ state: _g.colState, applyOrder: true })
+                  params.api.sizeColumnsToFit()
+                  recalcTotals()
+                }}
                 onFilterChanged={recalcTotals}
+                onColumnResized={params => { if (params.finished) saveColState() }}
+                onColumnMoved={saveColState}
+                onColumnVisible={saveColState}
                 onGridSizeChanged={() => gridRef.current?.api?.sizeColumnsToFit()}
                 onCellValueChanged={onCellValueChanged}
                 onCellDoubleClicked={onCellDoubleClicked}
