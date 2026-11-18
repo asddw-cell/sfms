@@ -61,7 +61,7 @@ export default function MigrateItemModal({
 
   const [step,             setStep]             = useState(STEP_CONFIG)
   const [targetItemNo,     setTargetItemNo]     = useState('')
-  const [dateFrom,         setDateFrom]         = useState(initialDateFrom || todayYM())
+  const [dateFrom,         setDateFrom]         = useState(todayYM())
   const [dateTo,           setDateTo]           = useState(initialDateTo   || elevenMonthsAheadYM())
   const [selectedTypes,    setSelectedTypes]    = useState([])
   const [allCustomers,     setAllCustomers]     = useState(!hasCustomer)
