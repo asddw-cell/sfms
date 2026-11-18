@@ -333,7 +333,7 @@ export default function MigrateItemModal({
                   <div style={{
                     border: '1px solid var(--c-border)',
                     borderRadius: 'var(--radius)',
-                    maxHeight: 240, overflowY: 'auto',
+                    maxHeight: 193, overflowY: 'auto',
                   }}>
                     {targets
                       .filter(t => {
