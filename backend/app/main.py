@@ -10,7 +10,7 @@ from app.db import get_db
 from app.auth import get_current_user
 from app.models import User
 from app.schemas import MeOut
-from app.routers import reference, forecast, actuals, changes, gm_copy, admin, prices
+from app.routers import reference, forecast, actuals, changes, gm_copy, admin, prices, item_migration
 
 
 app = FastAPI(
@@ -30,6 +30,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(reference.router)
+app.include_router(item_migration.router)   # must be before forecast to avoid /{bu_code} clash
 app.include_router(forecast.router)
 app.include_router(actuals.router)
 app.include_router(changes.router)
