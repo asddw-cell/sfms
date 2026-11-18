@@ -63,7 +63,7 @@ export default function MigrateItemModal({
   const [onConflict,     setOnConflict]     = useState('skip')
 
   const [targets,        setTargets]        = useState([])
-  const [targetFilter,   setTargetFilter]   = useState('')
+  const [targetSearch,   setTargetSearch]   = useState('')
   const [typeCounts,     setTypeCounts]     = useState([])
   const [previewRows,    setPreviewRows]    = useState([])
   const [result,         setResult]         = useState(null)
@@ -297,48 +297,57 @@ export default function MigrateItemModal({
                 <div style={{ fontSize: 12, color: 'var(--c-muted)' }}>Loading items…</div>
               ) : targets.length === 0 ? (
                 <div style={{ fontSize: 12, color: 'var(--c-muted)' }}>No sibling items found for this brand in this BU.</div>
-              ) : (() => {
-                const needle = targetFilter.toLowerCase()
-                const filtered = targets.filter(t =>
-                  t.ItemNo.toLowerCase().includes(needle) ||
-                  t.Description.toLowerCase().includes(needle)
-                )
-                const selectedLabel = targetItemNo
-                  ? targets.find(t => t.ItemNo === targetItemNo)
-                      ? `${targetItemNo} — ${targets.find(t => t.ItemNo === targetItemNo).Description}`
-                      : targetItemNo
-                  : ''
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <input
-                      type="text"
-                      placeholder="Type item no. to filter…"
-                      value={targetFilter}
-                      onChange={e => { setTargetFilter(e.target.value); setTargetItemNo('') }}
-                      disabled={loading}
-                      style={{ width: '100%', boxSizing: 'border-box' }}
-                      autoComplete="off"
-                    />
-                    <select
-                      value={targetItemNo}
-                      onChange={e => { setTargetItemNo(e.target.value); setTargetFilter('') }}
-                      size={Math.min(filtered.length + 1, 6)}
-                      disabled={loading}
-                      style={{ width: '100%', minHeight: 34 }}
-                    >
-                      <option value="">— Select target item —</option>
-                      {filtered.map(t => (
-                        <option key={t.ItemNo} value={t.ItemNo}>{t.ItemNo} — {t.Description}</option>
-                      ))}
-                    </select>
-                    {targetItemNo && (
-                      <div style={{ fontSize: 11, color: 'var(--c-accent)', marginTop: 2 }}>
-                        Selected: {selectedLabel}
-                      </div>
-                    )}
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    placeholder="Search by item no. or description…"
+                    value={targetSearch}
+                    onChange={e => setTargetSearch(e.target.value)}
+                    disabled={loading}
+                    style={{ width: '100%', marginBottom: 6 }}
+                    autoComplete="off"
+                  />
+                  <div style={{
+                    border: '1px solid var(--c-border)',
+                    borderRadius: 'var(--radius)',
+                    maxHeight: 240, overflowY: 'auto',
+                  }}>
+                    {targets
+                      .filter(t => {
+                        const q = targetSearch.toLowerCase()
+                        return !q || t.ItemNo.toLowerCase().includes(q) || t.Description.toLowerCase().includes(q)
+                      })
+                      .map(t => (
+                        <div
+                          key={t.ItemNo}
+                          onClick={() => { setTargetItemNo(t.ItemNo); setTargetSearch('') }}
+                          style={{
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                            borderBottom: '1px solid var(--c-border)',
+                            background: targetItemNo === t.ItemNo ? 'var(--c-cell-edited-bg)' : 'transparent',
+                          }}
+                          onMouseEnter={e => {
+                            if (targetItemNo !== t.ItemNo)
+                              e.currentTarget.style.background = 'var(--c-bg)'
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.background = targetItemNo === t.ItemNo
+                              ? 'var(--c-cell-edited-bg)'
+                              : 'transparent'
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--c-accent)' }}>{t.ItemNo}</div>
+                          <div style={{ fontSize: 11, color: 'var(--c-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {t.Description}
+                          </div>
+                        </div>
+                      ))
+                    }
                   </div>
-                )
-              })()}
+                </>
+              )}
             </div>
 
             <div className="modal-row">
