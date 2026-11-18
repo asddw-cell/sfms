@@ -338,12 +338,13 @@ export default function MigrateItemModal({
                     {targets
                       .filter(t => {
                         const q = targetSearch.toLowerCase()
-                        return !q || t.ItemNo.toLowerCase().includes(q) || t.Description.toLowerCase().includes(q)
+                        return !q || t.ItemNo.toLowerCase().includes(q) || (t.Description || '').toLowerCase().includes(q)
                       })
                       .map(t => (
                         <div
                           key={t.ItemNo}
-                          onClick={() => { setTargetItemNo(t.ItemNo); setTargetSearch('') }}
+                          onMouseDown={e => e.stopPropagation()}
+                          onClick={e => { e.stopPropagation(); setTargetItemNo(t.ItemNo) }}
                           style={{
                             padding: '8px 12px',
                             cursor: 'pointer',
@@ -352,7 +353,7 @@ export default function MigrateItemModal({
                           }}
                           onMouseEnter={e => {
                             if (targetItemNo !== t.ItemNo)
-                              e.currentTarget.style.background = 'var(--c-bg)'
+                              e.currentTarget.style.background = 'var(--c-hover-row)'
                           }}
                           onMouseLeave={e => {
                             e.currentTarget.style.background = targetItemNo === t.ItemNo
@@ -368,6 +369,12 @@ export default function MigrateItemModal({
                       ))
                     }
                   </div>
+                  {targetItem && (
+                    <div style={{ fontSize: 12, marginTop: 6, color: 'var(--c-success)' }}>
+                      ✓ Selected: <strong>{targetItem.ItemNo}</strong>
+                      {targetItem.Description ? ` — ${targetItem.Description}` : ''}
+                    </div>
+                  )}
                 </>
               )}
             </div>
