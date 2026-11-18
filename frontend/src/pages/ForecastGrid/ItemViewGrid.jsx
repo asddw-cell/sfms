@@ -104,6 +104,7 @@ export default function ItemViewGrid({
   me,
   currencySymbol,
   onError,
+  onMigrateClick,
 }) {
   const qc      = useQueryClient()
   const gridRef = useRef()
@@ -395,9 +396,23 @@ export default function ItemViewGrid({
       {/* Context bar */}
       <div style={{
         fontSize: 12, color: 'var(--c-muted)',
-        marginBottom: 8, display: 'flex', gap: 16, flexWrap: 'wrap',
+        marginBottom: 8, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center',
       }}>
-        <span><strong>Item:</strong> {itemNo}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {me?.role?.CanMigrateItems && (
+            <button
+              onClick={onMigrateClick}
+              title="Migrate item forecast"
+              style={{
+                background: 'none', border: '1px solid var(--c-border)',
+                borderRadius: 3, cursor: 'pointer',
+                color: 'var(--c-muted)', fontSize: 13, lineHeight: 1,
+                padding: '0 4px', height: 20, flexShrink: 0,
+              }}
+            >⋮</button>
+          )}
+          {' '}<strong>Item:</strong> {itemNo}
+        </span>
         {itemDetails?.Description && <span><strong>Description:</strong> {itemDetails.Description}</span>}
         <span><strong>Channel:</strong> {channelCode}</span>
         <span><strong>BU:</strong> {buCode}</span>

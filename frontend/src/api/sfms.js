@@ -105,3 +105,17 @@ export const confirmPriceImport = (buCode, importToken, conflictResolution) =>
 
 export const updatePriceRange = (buCode, priceIdFirst, body) =>
   client.patch(`/prices/${buCode}/${priceIdFirst}`, body).then(r => r.data)
+
+// ── Migrate Item ───────────────────────────────────────────────────────────────
+export const fetchMigrateTargets = (buCode, sourceItemNo) =>
+  client.get('/forecast/migrate-item/targets', { params: { bu_code: buCode, source_item_no: sourceItemNo } })
+    .then(r => r.data)
+
+export const fetchMigrateTypeCounts = (payload) =>
+  client.post('/forecast/migrate-item/type-counts', payload).then(r => r.data)
+
+export const previewMigration = (payload) =>
+  client.post('/forecast/migrate-item/preview', payload).then(r => r.data)
+
+export const executeMigration = (payload) =>
+  client.post('/forecast/migrate-item/execute', payload).then(r => r.data)
