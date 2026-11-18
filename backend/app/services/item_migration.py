@@ -52,7 +52,7 @@ def get_migration_targets(
     if region_col is not None:
         q = q.filter(region_col == True)
 
-    return q.order_by(Item.Description).all()
+    return q.order_by(Item.ItemNo).all()
 
 
 def get_type_counts(

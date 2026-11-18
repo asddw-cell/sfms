@@ -63,6 +63,7 @@ export default function MigrateItemModal({
   const [onConflict,     setOnConflict]     = useState('skip')
 
   const [targets,        setTargets]        = useState([])
+  const [targetFilter,   setTargetFilter]   = useState('')
   const [typeCounts,     setTypeCounts]     = useState([])
   const [previewRows,    setPreviewRows]    = useState([])
   const [result,         setResult]         = useState(null)
@@ -296,19 +297,48 @@ export default function MigrateItemModal({
                 <div style={{ fontSize: 12, color: 'var(--c-muted)' }}>Loading items…</div>
               ) : targets.length === 0 ? (
                 <div style={{ fontSize: 12, color: 'var(--c-muted)' }}>No sibling items found for this brand in this BU.</div>
-              ) : (
-                <select
-                  value={targetItemNo}
-                  onChange={e => setTargetItemNo(e.target.value)}
-                  style={{ width: '100%', height: 34 }}
-                  disabled={loading}
-                >
-                  <option value="">— Select target item —</option>
-                  {targets.map(t => (
-                    <option key={t.ItemNo} value={t.ItemNo}>{t.ItemNo} — {t.Description}</option>
-                  ))}
-                </select>
-              )}
+              ) : (() => {
+                const needle = targetFilter.toLowerCase()
+                const filtered = targets.filter(t =>
+                  t.ItemNo.toLowerCase().includes(needle) ||
+                  t.Description.toLowerCase().includes(needle)
+                )
+                const selectedLabel = targetItemNo
+                  ? targets.find(t => t.ItemNo === targetItemNo)
+                      ? `${targetItemNo} — ${targets.find(t => t.ItemNo === targetItemNo).Description}`
+                      : targetItemNo
+                  : ''
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <input
+                      type="text"
+                      placeholder="Type item no. to filter…"
+                      value={targetFilter}
+                      onChange={e => { setTargetFilter(e.target.value); setTargetItemNo('') }}
+                      disabled={loading}
+                      style={{ width: '100%', boxSizing: 'border-box' }}
+                      autoComplete="off"
+                    />
+                    <select
+                      value={targetItemNo}
+                      onChange={e => { setTargetItemNo(e.target.value); setTargetFilter('') }}
+                      size={Math.min(filtered.length + 1, 6)}
+                      disabled={loading}
+                      style={{ width: '100%', minHeight: 34 }}
+                    >
+                      <option value="">— Select target item —</option>
+                      {filtered.map(t => (
+                        <option key={t.ItemNo} value={t.ItemNo}>{t.ItemNo} — {t.Description}</option>
+                      ))}
+                    </select>
+                    {targetItemNo && (
+                      <div style={{ fontSize: 11, color: 'var(--c-accent)', marginTop: 2 }}>
+                        Selected: {selectedLabel}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
 
             <div className="modal-row">
