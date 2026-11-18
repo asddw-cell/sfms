@@ -9,7 +9,7 @@ from datetime import date, datetime
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models import ForecastData, Item, User, UserCustomer, ForecastType
+from app.models import ForecastData, Item, User, ForecastType
 from app.services.editability import check_editable
 
 _REGION_COLUMN_MAP = {
@@ -60,20 +60,30 @@ def get_type_counts(
     source_item_no: str,
     date_from: date,
     date_to: date,
+    customer_code: str | None,
+    all_customers: bool,
     db: Session,
 ) -> list[dict]:
-    """Returns forecast types with row counts for the source item in the date range."""
-    rows = db.query(ForecastData).filter(
+    """Returns forecast types with row counts (and total distinct customer count) for the
+    source item in the date range, scoped to the given customer or all customers."""
+    customer_filter = _resolve_customer_filter(all_customers, customer_code)
+
+    q = db.query(ForecastData).filter(
         ForecastData.BusinessUnitCode == bu_code,
         ForecastData.ItemNo           == source_item_no,
         ForecastData.ForecastDate     >= date_from.replace(day=1),
         ForecastData.ForecastDate     <= date_to.replace(day=1),
-    ).all()
+    )
+    if customer_filter is not None:
+        q = q.filter(ForecastData.CustomerCode.in_(customer_filter))
+    rows = q.all()
 
     from collections import Counter
     type_counts = Counter(r.ForecastTypeCode for r in rows)
     if not type_counts:
         return []
+
+    total_customer_count = len({r.CustomerCode for r in rows})
 
     types = db.query(ForecastType).filter(ForecastType.Code.in_(list(type_counts))).all()
     type_name_map = {t.Code: t.Name for t in types}
@@ -83,6 +93,7 @@ def get_type_counts(
             "forecast_type_code": code,
             "name": type_name_map.get(code, str(code)),
             "row_count": count,
+            "customer_count": total_customer_count,
         }
         for code, count in sorted(type_counts.items())
     ]
@@ -95,12 +106,13 @@ def get_migration_preview(
     date_from: date,
     date_to: date,
     forecast_type_codes: list[int],
+    customer_code: str | None,
     all_customers: bool,
     user: User,
     db: Session,
 ) -> list[dict]:
     """Returns a preview of rows that would be moved, flagging conflicts."""
-    customer_filter = _resolve_customer_filter(bu_code, all_customers, user, db)
+    customer_filter = _resolve_customer_filter(all_customers, customer_code)
 
     source_rows = _fetch_source_rows(
         bu_code, source_item_no, date_from, date_to, forecast_type_codes, customer_filter, db
@@ -147,6 +159,7 @@ def execute_migration(
     date_from: date,
     date_to: date,
     forecast_type_codes: list[int],
+    customer_code: str | None,
     all_customers: bool,
     on_conflict: str,
     user: User,
@@ -155,7 +168,7 @@ def execute_migration(
     """Moves forecast rows from source item to target item. Returns move/skip/overwrite counts."""
     from app.services.supply_sync import sync_supply_row, delete_supply_row
 
-    customer_filter = _resolve_customer_filter(bu_code, all_customers, user, db)
+    customer_filter = _resolve_customer_filter(all_customers, customer_code)
     source_rows = _fetch_source_rows(
         bu_code, source_item_no, date_from, date_to, forecast_type_codes, customer_filter, db
     )
@@ -264,19 +277,13 @@ def execute_migration(
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _resolve_customer_filter(
-    bu_code: str,
     all_customers: bool,
-    user: User,
-    db: Session,
+    customer_code: str | None,
 ) -> list[str] | None:
-    """Returns None (no filter) or a list of allowed customer codes."""
+    """Returns None (all customers) or a single-element list for the given customer."""
     if all_customers:
         return None
-    restrictions = db.query(UserCustomer).filter(
-        UserCustomer.UserID           == user.UserID,
-        UserCustomer.BusinessUnitCode == bu_code,
-    ).all()
-    return [r.CustomerCode for r in restrictions] if restrictions else None
+    return [customer_code] if customer_code else None
 
 
 def _fetch_source_rows(

@@ -29,6 +29,11 @@ def _require_can_migrate(current_user: User) -> None:
         raise HTTPException(403, detail="Your role does not have permission to migrate items.")
 
 
+def _validate_scope(all_customers: bool, customer_code) -> None:
+    if not all_customers and not customer_code:
+        raise HTTPException(400, detail="customer_code is required when all_customers is false.")
+
+
 def _require_bu_access(bu_code: str, current_user: User, db: Session) -> None:
     assignment = db.query(UserBusinessUnit).filter(
         UserBusinessUnit.UserID           == current_user.UserID,
@@ -44,6 +49,7 @@ class TypeCountRow(BaseModel):
     forecast_type_code: int
     name: str
     row_count: int
+    customer_count: int
 
 
 class TypeCountsRequest(BaseModel):
@@ -51,6 +57,8 @@ class TypeCountsRequest(BaseModel):
     source_item_no: str
     date_from: date
     date_to: date
+    customer_code: Optional[str] = None
+    all_customers: bool = False
 
 
 class PreviewRow(BaseModel):
@@ -71,7 +79,8 @@ class MigratePreviewRequest(BaseModel):
     date_from: date
     date_to: date
     forecast_type_codes: list[int]
-    all_customers: bool
+    customer_code: Optional[str] = None
+    all_customers: bool = False
 
 
 class MigrateExecuteRequest(BaseModel):
@@ -81,7 +90,8 @@ class MigrateExecuteRequest(BaseModel):
     date_from: date
     date_to: date
     forecast_type_codes: list[int]
-    all_customers: bool
+    customer_code: Optional[str] = None
+    all_customers: bool = False
     on_conflict: Literal["skip", "overwrite"]
 
 
@@ -116,7 +126,11 @@ def type_counts(
     """Returns forecast types and row counts for the source item in the given date range."""
     _require_can_migrate(current_user)
     _require_bu_access(body.bu_code, current_user, db)
-    return svc.get_type_counts(body.bu_code, body.source_item_no, body.date_from, body.date_to, db)
+    _validate_scope(body.all_customers, body.customer_code)
+    return svc.get_type_counts(
+        body.bu_code, body.source_item_no, body.date_from, body.date_to,
+        body.customer_code, body.all_customers, db,
+    )
 
 
 @router.post("/preview", response_model=list[PreviewRow])
@@ -128,10 +142,11 @@ def preview_migration(
     """Returns a preview of rows that would be migrated, flagging conflicts on the target item."""
     _require_can_migrate(current_user)
     _require_bu_access(body.bu_code, current_user, db)
+    _validate_scope(body.all_customers, body.customer_code)
     return svc.get_migration_preview(
         body.bu_code, body.source_item_no, body.target_item_no,
         body.date_from, body.date_to, body.forecast_type_codes,
-        body.all_customers, current_user, db,
+        body.customer_code, body.all_customers, current_user, db,
     )
 
 
@@ -144,8 +159,9 @@ def execute_migration(
     """Moves forecast rows from source item to target item. Atomic — all rows committed together."""
     _require_can_migrate(current_user)
     _require_bu_access(body.bu_code, current_user, db)
+    _validate_scope(body.all_customers, body.customer_code)
     return svc.execute_migration(
         body.bu_code, body.source_item_no, body.target_item_no,
         body.date_from, body.date_to, body.forecast_type_codes,
-        body.all_customers, body.on_conflict, current_user, db,
+        body.customer_code, body.all_customers, body.on_conflict, current_user, db,
     )

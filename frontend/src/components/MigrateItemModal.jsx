@@ -47,6 +47,8 @@ const STEP_RESULT   = 3   // result screen
 export default function MigrateItemModal({
   sourceItem,
   buCode,
+  customerCode,         // code of the clicked row's customer; empty string in item view
+  customerName,         // display name for the customer (may be empty)
   dateFrom: initialDateFrom,
   dateTo:   initialDateTo,
   forecastTypes,
@@ -54,22 +56,27 @@ export default function MigrateItemModal({
   onClose,
   onDone,
 }) {
-  const [step,           setStep]           = useState(STEP_CONFIG)
-  const [targetItemNo,   setTargetItemNo]   = useState('')
-  const [dateFrom,       setDateFrom]       = useState(initialDateFrom || todayYM())
-  const [dateTo,         setDateTo]         = useState(initialDateTo   || elevenMonthsAheadYM())
-  const [selectedTypes,  setSelectedTypes]  = useState([])
-  const [allCustomers,   setAllCustomers]   = useState(false)
-  const [onConflict,     setOnConflict]     = useState('skip')
+  // When no specific customer context (item view), default to all-customers mode
+  const hasCustomer = !!customerCode
 
-  const [targets,        setTargets]        = useState([])
-  const [targetSearch,   setTargetSearch]   = useState('')
-  const [typeCounts,     setTypeCounts]     = useState([])
-  const [previewRows,    setPreviewRows]    = useState([])
-  const [result,         setResult]         = useState(null)
+  const [step,             setStep]             = useState(STEP_CONFIG)
+  const [targetItemNo,     setTargetItemNo]     = useState('')
+  const [dateFrom,         setDateFrom]         = useState(initialDateFrom || todayYM())
+  const [dateTo,           setDateTo]           = useState(initialDateTo   || elevenMonthsAheadYM())
+  const [selectedTypes,    setSelectedTypes]    = useState([])
+  const [allCustomers,     setAllCustomers]     = useState(!hasCustomer)
+  const [onConflict,       setOnConflict]       = useState('skip')
+  const [typeCustomerCount, setTypeCustomerCount] = useState(0)
 
-  const [loading,        setLoading]        = useState(false)
-  const [error,          setError]          = useState('')
+  const [targets,          setTargets]          = useState([])
+  const [targetSearch,     setTargetSearch]     = useState('')
+  const [typeCounts,       setTypeCounts]       = useState([])
+  const [previewRows,      setPreviewRows]      = useState([])
+  const [previewValid,     setPreviewValid]     = useState(false)  // false → must re-preview
+  const [result,           setResult]           = useState(null)
+
+  const [loading,          setLoading]          = useState(false)
+  const [error,            setError]            = useState('')
 
   // Load sibling targets on mount
   useEffect(() => {
@@ -80,22 +87,34 @@ export default function MigrateItemModal({
       .finally(() => setLoading(false))
   }, [buCode, sourceItem.itemNo])
 
-  // Load type counts whenever source, dates, or BU change (after targets loaded)
+  // Load type counts whenever source, dates, BU, scope toggle or customerCode change
   useEffect(() => {
     if (!dateFrom || !dateTo || dateFrom > dateTo) return
+    if (!allCustomers && !customerCode) return  // no scope to query
     fetchMigrateTypeCounts({
       bu_code:        buCode,
       source_item_no: sourceItem.itemNo,
       date_from:      dateFrom + '-01',
       date_to:        dateTo   + '-01',
+      customer_code:  allCustomers ? null : customerCode,
+      all_customers:  allCustomers,
     })
       .then(rows => {
         setTypeCounts(rows)
-        // Auto-select all types
-        setSelectedTypes(rows.map(r => r.forecast_type_code))
+        setTypeCustomerCount(rows[0]?.customer_count ?? 0)
+        // Keep previously ticked types that still have rows; auto-select all if first load
+        const availableCodes = new Set(rows.map(r => r.forecast_type_code))
+        setSelectedTypes(prev =>
+          prev.length === 0
+            ? rows.map(r => r.forecast_type_code)
+            : prev.filter(c => availableCodes.has(c))
+        )
+        // Invalidate any existing preview so the user must re-run it
+        setPreviewValid(false)
+        setPreviewRows([])
       })
       .catch(() => {})
-  }, [buCode, sourceItem.itemNo, dateFrom, dateTo])
+  }, [buCode, sourceItem.itemNo, dateFrom, dateTo, allCustomers, customerCode])
 
   // ── Step handlers ──────────────────────────────────────────────────────────
 
@@ -115,9 +134,11 @@ export default function MigrateItemModal({
         date_from:           dateFrom + '-01',
         date_to:             dateTo   + '-01',
         forecast_type_codes: selectedTypes,
+        customer_code:       allCustomers ? null : customerCode,
         all_customers:       allCustomers,
       })
       setPreviewRows(rows)
+      setPreviewValid(true)
       setStep(STEP_PREVIEW)
     } catch (e) {
       setError(e.response?.data?.detail || e.message)
@@ -137,6 +158,7 @@ export default function MigrateItemModal({
         date_from:           dateFrom + '-01',
         date_to:             dateTo   + '-01',
         forecast_type_codes: selectedTypes,
+        customer_code:       allCustomers ? null : customerCode,
         all_customers:       allCustomers,
         on_conflict:         onConflict,
       })
@@ -273,7 +295,7 @@ export default function MigrateItemModal({
 
             <div className="modal-actions">
               <button className="btn btn-ghost" onClick={() => setStep(STEP_CONFIG)} disabled={loading}>Back</button>
-              <button className="btn btn-primary" onClick={() => setStep(STEP_CONFIRM)} disabled={loading || !previewRows.length}>
+              <button className="btn btn-primary" onClick={() => setStep(STEP_CONFIRM)} disabled={loading || !previewRows.length || !previewValid}>
                 Continue
               </button>
             </div>
@@ -387,22 +409,35 @@ export default function MigrateItemModal({
               </div>
             </div>
 
-            {/* All customers toggle — only relevant if user has customer restrictions */}
-            {me?.role?.CanViewAllBU && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', marginBottom: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={allCustomers}
-                  onChange={e => setAllCustomers(e.target.checked)}
-                  style={{ width: 14, height: 14, accentColor: 'var(--c-accent)' }}
-                />
-                Include all customers (not just my assigned customers)
-              </label>
-            )}
+            {/* Scope: single customer (default) vs all customers opt-in */}
+            <div className="modal-row">
+              <label>Scope</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={allCustomers}
+                    onChange={e => setAllCustomers(e.target.checked)}
+                    disabled={!hasCustomer}
+                    style={{ width: 14, height: 14, accentColor: 'var(--c-accent)' }}
+                  />
+                  Include all customers (same Responsibility &amp; Sales Channel)
+                </label>
+                <div style={{ fontSize: 12, color: 'var(--c-muted)' }}>
+                  {allCustomers
+                    ? typeCustomerCount > 0
+                      ? `All customers — ${typeCustomerCount} with source rows`
+                      : 'All customers'
+                    : customerCode
+                      ? `Customer: ${customerCode}${customerName ? ` — ${customerName}` : ''}`
+                      : 'No customer selected'}
+                </div>
+              </div>
+            </div>
 
             <div className="modal-actions">
               <button className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancel</button>
-              <button className="btn btn-primary" onClick={handlePreview} disabled={loading || !targetItemNo || !selectedTypes.length}>
+              <button className="btn btn-primary" onClick={handlePreview} disabled={loading || !targetItemNo || !selectedTypes.length || (!allCustomers && !customerCode)}>
                 {loading ? 'Loading…' : 'Preview →'}
               </button>
             </div>

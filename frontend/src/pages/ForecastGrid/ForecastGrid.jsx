@@ -896,7 +896,7 @@ map.get(itemNo).months[mk] = {
               <button
                 onClick={e => {
                   e.stopPropagation()
-                  setMigrateItem({ itemNo: params.data.itemNo, description: params.data.description, brandName: params.data.brandName })
+                  setMigrateItem({ itemNo: params.data.itemNo, description: params.data.description, brandName: params.data.brandName, customerCode, customerName: customers.find(c => c.Code === customerCode)?.Name ?? customerCode })
                 }}
                 title="Migrate item forecast"
                 style={{
@@ -1863,7 +1863,7 @@ map.get(itemNo).months[mk] = {
             currencySymbol={currencySymbol}
             onError={setItemViewError}
             onMigrateClick={me?.role?.CanMigrateItems
-              ? () => setMigrateItem({ itemNo, description: selectedItemDetails?.Description ?? '', brandName: selectedItemDetails?.BrandCode ?? '' })
+              ? () => setMigrateItem({ itemNo, description: selectedItemDetails?.Description ?? '', brandName: selectedItemDetails?.BrandCode ?? '', customerCode: '', customerName: '' })
               : undefined}
           />
         )}
@@ -2035,6 +2035,8 @@ map.get(itemNo).months[mk] = {
         <MigrateItemModal
           sourceItem={migrateItem}
           buCode={buCode}
+          customerCode={migrateItem.customerCode}
+          customerName={migrateItem.customerName}
           dateFrom={dateFrom}
           dateTo={dateTo}
           forecastTypes={fts}
