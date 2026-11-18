@@ -311,6 +311,8 @@ export default function MigrateItemModal({
               {sourceItem.description ? ` — ${sourceItem.description}` : ''} to a sibling variant.
             </p>
 
+            <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+
             {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
 
             <div className="modal-row">
@@ -441,6 +443,8 @@ export default function MigrateItemModal({
                 </div>
               </div>
             </div>
+
+            </div>{/* end scrollable */}
 
             <div className="modal-actions">
               <button className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancel</button>
