@@ -824,8 +824,15 @@ map.get(itemNo).months[mk] = {
 
   // ── Hide-zero-rows external filter ─────────────────────────────────────────
   // Refs keep the callbacks stable ([] deps) while still seeing current values.
-  const hideZeroRowsRef = useRef(hideZeroRows)
-  const zeroItemsRef    = useRef(new Set())
+  const hideZeroRowsRef  = useRef(hideZeroRows)
+  const zeroItemsRef     = useRef(new Set())
+  // Refs so colDefs cellRenderer can read the current customer without being
+  // in colDefs deps (adding them would rebuild columns on every customer switch
+  // and reset AG Grid's tooltip state).
+  const customerCodeRef  = useRef(customerCode)
+  const customersRef     = useRef(customers)
+  customerCodeRef.current = customerCode
+  customersRef.current    = customers
 
   useEffect(() => {
     hideZeroRowsRef.current = hideZeroRows
@@ -896,7 +903,7 @@ map.get(itemNo).months[mk] = {
               <button
                 onClick={e => {
                   e.stopPropagation()
-                  setMigrateItem({ itemNo: params.data.itemNo, description: params.data.description, brandName: params.data.brandName, customerCode, customerName: customers.find(c => c.Code === customerCode)?.Name ?? customerCode })
+                  setMigrateItem({ itemNo: params.data.itemNo, description: params.data.description, brandName: params.data.brandName, customerCode: customerCodeRef.current, customerName: customersRef.current.find(c => c.Code === customerCodeRef.current)?.Name ?? customerCodeRef.current })
                 }}
                 title="Migrate item forecast"
                 style={{
