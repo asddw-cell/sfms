@@ -218,11 +218,8 @@ def execute_migration(
             existing_target.Notes       = row.Notes
             existing_target.ModifiedBy  = user.UserID
             existing_target.ModifiedDate = now
-            try:
-                if sales_type and existing_target.ForecastTypeCode == sales_type:
-                    sync_supply_row(existing_target, db)
-            except Exception:
-                pass
+            if sales_type and existing_target.ForecastTypeCode == sales_type:
+                _sync_supply_safe(existing_target, db)
             overwritten += 1
         else:
             new_row = ForecastData(
@@ -243,11 +240,8 @@ def execute_migration(
             )
             db.add(new_row)
             db.flush()
-            try:
-                if sales_type and new_row.ForecastTypeCode == sales_type:
-                    sync_supply_row(new_row, db)
-            except Exception:
-                pass
+            if sales_type and new_row.ForecastTypeCode == sales_type:
+                _sync_supply_safe(new_row, db)
             moved += 1
 
         # Delete source row (always, whether we moved or overwrote)
@@ -284,6 +278,19 @@ def _resolve_customer_filter(
     if all_customers:
         return None
     return [customer_code] if customer_code else None
+
+
+def _sync_supply_safe(sales_row, db) -> None:
+    """Call sync_supply_row inside a savepoint and flush immediately so that
+    any constraint violation is caught and isolated here rather than surfacing
+    later when the outer db.flush() batches unrelated rows together."""
+    try:
+        sp = db.begin_nested()
+        sync_supply_row(sales_row, db)
+        db.flush()
+        sp.commit()
+    except Exception:
+        sp.rollback()
 
 
 def _fetch_source_rows(
