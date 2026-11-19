@@ -72,6 +72,7 @@ class RoleOut(ORMBase):
     CanManageRefData: bool
     CanLoadActuals: bool
     CanEditSupplyForecast: bool
+    CanMigrateItems: bool
 
 class CustomerAssignmentOut(ORMBase):
     CustomerCode: str

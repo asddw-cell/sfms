@@ -113,6 +113,7 @@ class Role(Base):
     CanManageRefData  = Column(Boolean,    nullable=False, default=False)
     CanLoadActuals          = Column(Boolean,    nullable=False, default=False)
     CanEditSupplyForecast   = Column(Boolean,    nullable=False, default=False)
+    CanMigrateItems         = Column(Boolean,    nullable=False, default=False)
 
     users = relationship("User", back_populates="role")
 

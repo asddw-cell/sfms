@@ -24,6 +24,7 @@ import EditModal from '../../components/EditModal'
 import MultiSelect from '../../components/MultiSelect'
 import AddItemsModal from '../../components/AddItemsModal'
 import GmCopyModal          from '../../components/GmCopyModal'
+import MigrateItemModal     from '../../components/MigrateItemModal'
 import ForecastSummaryPanel from '../../components/ForecastSummaryPanel'
 const SHOW_FORECAST_SUMMARY = import.meta.env.VITE_FEATURE_FORECAST_SUMMARY === 'true'
 import MonthPicker from '../../components/MonthPicker'
@@ -271,6 +272,7 @@ export default function ForecastGrid() {
   const updateDateTo       = v => { setDateTo(v);        saveFilters({ ...loadFilters(), dateTo: v }) }
 
   const [modalCell,    setModalCell]    = useState(null)
+  const [migrateItem,  setMigrateItem]  = useState(null)  // { itemNo, description, brandName }
   const [showAddItems, setShowAddItems] = useState(false)
   const [showGmCopy,   setShowGmCopy]   = useState(false)
   const [showActuals,  setShowActuals]  = useState(_g.showActuals  ?? false)
@@ -822,8 +824,15 @@ map.get(itemNo).months[mk] = {
 
   // ── Hide-zero-rows external filter ─────────────────────────────────────────
   // Refs keep the callbacks stable ([] deps) while still seeing current values.
-  const hideZeroRowsRef = useRef(hideZeroRows)
-  const zeroItemsRef    = useRef(new Set())
+  const hideZeroRowsRef  = useRef(hideZeroRows)
+  const zeroItemsRef     = useRef(new Set())
+  // Refs so colDefs cellRenderer can read the current customer without being
+  // in colDefs deps (adding them would rebuild columns on every customer switch
+  // and reset AG Grid's tooltip state).
+  const customerCodeRef  = useRef(customerCode)
+  const customersRef     = useRef(customers)
+  customerCodeRef.current = customerCode
+  customersRef.current    = customers
 
   useEffect(() => {
     hideZeroRowsRef.current = hideZeroRows
@@ -877,7 +886,41 @@ map.get(itemNo).months[mk] = {
         valueGetter: params => params.data
           ? `${params.data.itemNo}  —  ${params.data.description}`
           : '',
-        cellStyle: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 },
+        cellStyle: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, padding: 0 },
+        cellRenderer: params => {
+          if (!params.data) return params.value ?? ''
+          const label = params.value ?? ''
+          const showBtn = params.data.rowType === 'F' && me?.role?.CanMigrateItems
+          if (!showBtn) {
+            return (
+              <div style={{ padding: '0 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', height: '100%', display: 'flex', alignItems: 'center', fontSize: 11 }}>
+                {label}
+              </div>
+            )
+          }
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', height: '100%', padding: '0 4px 0 4px', gap: 4, overflow: 'hidden' }}>
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  setMigrateItem({ itemNo: params.data.itemNo, description: params.data.description, brandName: params.data.brandName, customerCode: customerCodeRef.current, customerName: customersRef.current.find(c => c.Code === customerCodeRef.current)?.Name ?? customerCodeRef.current })
+                }}
+                title="Migrate item forecast"
+                style={{
+                  flexShrink: 0,
+                  background: 'none', border: '1px solid var(--c-border)',
+                  borderRadius: 3, cursor: 'pointer',
+                  color: 'var(--c-muted)', fontSize: 13, lineHeight: 1,
+                  padding: '0 4px', height: 20,
+                }}
+              >⋮</button>
+              {' '}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11 }}>
+                {label}
+              </span>
+            </div>
+          )
+        },
         onCellContextMenu: params => {
           if (!params.data || params.data.rowType !== 'F') return
           params.event.preventDefault()
@@ -1826,6 +1869,9 @@ map.get(itemNo).months[mk] = {
             me={me}
             currencySymbol={currencySymbol}
             onError={setItemViewError}
+            onMigrateClick={me?.role?.CanMigrateItems
+              ? () => setMigrateItem({ itemNo, description: selectedItemDetails?.Description ?? '', brandName: selectedItemDetails?.BrandCode ?? '', customerCode: '', customerName: '' })
+              : undefined}
           />
         )}
 
@@ -1990,6 +2036,24 @@ map.get(itemNo).months[mk] = {
             </div>
           </div>
         </div>
+      )}
+
+      {migrateItem && (
+        <MigrateItemModal
+          sourceItem={migrateItem}
+          buCode={buCode}
+          customerCode={migrateItem.customerCode}
+          customerName={migrateItem.customerName}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          forecastTypes={fts}
+          me={me}
+          onClose={() => setMigrateItem(null)}
+          onDone={() => {
+            setMigrateItem(null)
+            qc.invalidateQueries({ queryKey: ['forecast'] })
+          }}
+        />
       )}
 
       {showGmCopy && (
